@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <GameDir Condition="'$(GameDir)' == '' and '$(PROBABLY_STOLEN_DIR)' != ''">$(PROBABLY_STOLEN_DIR)</GameDir>
+  </PropertyGroup>
+</Project>

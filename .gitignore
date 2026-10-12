@@ -1,0 +1,13 @@
+bin/
+obj/
+dist/
+.vs/
+.idea/
+*.user
+*.suo
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+.installed-backup
+SmartInventoryArrange-Snapshot.log
