@@ -7,7 +7,7 @@ using MelonLoader;
 using SmartInventoryArrange.Core;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.11.0", "OpenAI")]
+[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.13.0", "OpenAI")]
 [assembly: MelonGame(null, "Probably Stolen")]
 
 namespace SmartInventoryArrange;
@@ -19,7 +19,7 @@ public sealed class SmartArrangeMod : MelonMod
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg("SmartInventoryArrange v3.11.0 loaded: dense local search + wrapped type blocks + visual-first comparison + coordinate snapshots; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
+        LoggerInstance.Msg("SmartInventoryArrange v3.13.0 loaded: native34 global family repack + row bands + semantic anchors + interlocks + immutable transaction + coordinate snapshots; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
         LoggerInstance.Msg("Patching ItemContextHandler.OnEventInit, TriggerButton and OnEventReset");
     }
 
@@ -67,12 +67,7 @@ public sealed class SmartArrangeMod : MelonMod
     {
         var task = Task.Run(() =>
         {
-            var solver = new DeterministicSolver
-            {
-                BeamWidth = beam,
-                CandidatesPerState = candidates,
-                TimeBudget = TimeSpan.FromMilliseconds(budgetMs)
-            };
+            var solver = new Native34Solver();
             var result = solver.Solve(tx.Problem, tx.OriginalPlacements);
             var baseline = DeterministicSolver.Evaluate(tx.Problem, tx.OriginalPlacements);
             return (result, baseline, solver.Diagnostic);
@@ -89,7 +84,9 @@ public sealed class SmartArrangeMod : MelonMod
 
             var solved = task.Result;
             var result = solved.result;
-            int comparison = DeterministicSolver.CompareForProblem(tx.Problem, result.Score, solved.baseline);
+            int comparison = Native34Solver.SameLayout(result.Placements, tx.OriginalPlacements) ? 0 : 1;
+            if (!Native34Solver.ValidateLayout(tx.Problem, result.Placements))
+                throw new InvalidOperationException("Native34 final immutable geometry validation failed.");
             if (!result.Complete || comparison <= 0)
             {
                 _lastOptimizedSignature = LayoutSignature(tx.Problem, tx.OriginalPlacements);
@@ -105,7 +102,7 @@ public sealed class SmartArrangeMod : MelonMod
             tx.WriteResultSnapshot(result.Placements, "applied");
             _lastOptimizedSignature = LayoutSignature(tx.Problem, result.Placements);
             int rotations = result.Placements.Count(p => p.Rotated);
-            MelonLogger.Msg($"Smart arrange success: mode={DeterministicSolver.DensityMode(tx.Problem)}, occupancy={DeterministicSolver.OccupancyRatio(tx.Problem):P1}, placed={result.Placements.Count}, horizontalExceptions={rotations}, holes={result.Holes}, narrowFragments={result.NarrowFragments}, elapsed={result.Elapsed.TotalMilliseconds:F1}ms, fallback={result.UsedFallback}, visual={VisualSummary(result.Score)}, splitGroups={DeterministicSolver.DescribeSplits(result.Placements)}");
+            MelonLogger.Msg($"Smart arrange success: mode={DeterministicSolver.DensityMode(tx.Problem)}, occupancy={DeterministicSolver.OccupancyRatio(tx.Problem):P1}, placed={result.Placements.Count}, horizontalExceptions={rotations}, holes={result.Holes}, narrowFragments={result.NarrowFragments}, elapsed={result.Elapsed.TotalMilliseconds:F1}ms, fallback={result.UsedFallback}, visual={VisualSummary(result.Score)}, splitGroups={DeterministicSolver.DescribeSplits(result.Placements)}, native34={solved.Diagnostic}");
         }
         catch (Exception ex)
         {

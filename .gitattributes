@@ -1,0 +1,2 @@
+# Preserve exact embedded frozen-model bytes across Windows/Linux checkouts.
+src/SmartInventoryArrange/Models/directional21.json -text whitespace=cr-at-eol

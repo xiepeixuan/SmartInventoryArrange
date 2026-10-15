@@ -54,8 +54,8 @@ internal sealed class InventoryTransaction
         {
             string primary = r.categories.OrderBy(CategoryRank).ThenBy(x => x, StringComparer.Ordinal).FirstOrDefault() ?? "~unknown";
             var orientations = BuildOrientations(r.shape);
-            var model = new LayoutItem { StableId = r.id, PrimaryCategory = primary, Categories = r.categories,
-                Orientations = orientations, OriginalOrientation = r.shape.orientation, OriginalX = r.shape.minX - container.minX, OriginalY = r.shape.minY - container.minY,
+            var model = new LayoutItem { StableId = r.id, ItemId = r.item.identifier, PrimaryCategory = primary, Categories = r.categories,
+                Orientations = orientations, OriginalMask = Mask(r.shape), OriginalOrientation = r.shape.orientation, OriginalX = r.shape.minX - container.minX, OriginalY = r.shape.minY - container.minY,
                 VisualPriority = VisualPriority(primary) };
             if (r.movable) movable.Add(new Snap(r.item, r.id, r.shape, Fingerprint(r.item), model));
             else fixedItems.Add(new Placement(r.id, r.shape.minX - container.minX, r.shape.minY - container.minY, r.shape.orientation, Mask(r.shape), "~fixed", false));

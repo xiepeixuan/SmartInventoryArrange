@@ -911,7 +911,8 @@ public sealed class DeterministicSolver
             if (kv.Value.Category == n.Category) sameCategory++; else different++;
         }
 
-        var movable = placements.Where(x => x.Category != "~fixed").ToArray();
+        var movableIds = p.Items.Select(i => i.StableId).ToHashSet(StringComparer.Ordinal);
+        var movable = placements.Where(x => movableIds.Contains(x.StableId)).ToArray();
         var itemById = p.Items.ToDictionary(x => x.StableId, StringComparer.Ordinal);
         int priorityOrder = 0, categoryOrder = 0, largeFirst = 0;
         for (int i = 0; i < movable.Length; i++)

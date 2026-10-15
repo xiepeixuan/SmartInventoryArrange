@@ -30,9 +30,11 @@ public sealed record Orientation(int GameOrientation, ShapeMask Mask, bool Rotat
 public sealed class LayoutItem
 {
     public string StableId { get; init; } = "";
+    public string ItemId { get; init; } = "";
     public string PrimaryCategory { get; init; } = "~unknown";
     public IReadOnlyList<string> Categories { get; init; } = Array.Empty<string>();
     public IReadOnlyList<Orientation> Orientations { get; init; } = Array.Empty<Orientation>();
+    public ShapeMask? OriginalMask { get; init; }
     public int OriginalOrientation { get; init; }
     public int OriginalX { get; init; }
     public int OriginalY { get; init; }
