@@ -10,7 +10,7 @@ namespace SmartInventoryArrange.Core;
 /// Original game masks, stable instances and transaction application stay separate.
 /// All search caps count deterministic work, never wall-clock selection decisions.
 /// </summary>
-public sealed class Native34Solver
+public sealed partial class Native34Solver
 {
     public int NodeLimit { get; init; } = 250000;
     public int MaxPasses { get; init; } = 8;
@@ -56,7 +56,7 @@ public sealed class Native34Solver
         int Mixed, int Portrait, bool Interlock, int Left, int Top, int Bottom, int ItemArea);
     private sealed record Metrics(GroupMetric[] Groups, int Regions, int Detached, int ExtraRows,
         int Mixed, int Landscape, int PortraitInterlock, int Overlaps, int Left, int Inversions, int Middle,
-        int LargestMiddle, int Height, double AnchorY, int AnchorArea, double Priority);
+        int LargestMiddle, int Height, double AnchorY, int AnchorArea, double Priority, int CohortRows, double RowDebt, int AnchorIntrusion);
     public sealed record CandidateTrace(string Signature, string[] Generators, bool Valid, string RejectedReason,
         string Metrics, bool Selected);
     public IReadOnlyList<CandidateTrace> CandidateRecords { get; private set; } = Array.Empty<CandidateTrace>();
@@ -112,10 +112,12 @@ public sealed class Native34Solver
     private Orientation[] Options(LayoutItem i, string style)
     {
         if (_optionCache.TryGetValue((i.StableId, style), out var cached)) return cached;
+        // Legal masks/codes and stable IDs only: current positions/directions never
+        // decide which fresh global layout is generated.
         var result = i.Orientations
             .GroupBy(o => o.Mask.Signature, StringComparer.Ordinal).Select(g => g.OrderBy(o => o.GameOrientation).First())
-            .OrderBy(o => style == "portrait" ? o.Mask.Width > o.Mask.Height ? 1 : 0 : 0)
-            .ThenBy(o => o.GameOrientation != _currentOrientations.GetValueOrDefault(i.StableId, i.OriginalOrientation)).ThenBy(o => o.GameOrientation).ToArray();
+            .OrderBy(o => o.Mask.Width > o.Mask.Height).ThenBy(o => o.GameOrientation)
+            .ThenBy(o => o.Mask.Signature, StringComparer.Ordinal).ToArray();
         _optionCache[(i.StableId, style)] = result; return result;
     }
     private bool Interlocking(LayoutItem i)
@@ -196,7 +198,7 @@ public sealed class Native34Solver
             }
         }
         result = result.GroupBy(t => Key(t.Items), StringComparer.Ordinal).Select(g => g.First()).OrderBy(t => t.Rows)
-            .ThenBy(t => style == "portrait" ? t.Landscape : t.Items.Count(q => q.GameOrientation != _currentOrientations.GetValueOrDefault(q.StableId, _docs[q.StableId].OriginalOrientation)))
+            .ThenBy(t => t.Landscape)
             .ThenBy(t => t.Height).ThenBy(t => -t.Width).ThenBy(t => Key(t.Items), StringComparer.Ordinal).ToList();
         _templates[ck] = result; return result;
     }
@@ -225,9 +227,7 @@ public sealed class Native34Solver
     }
     private void Shelf(string order, string style, string layout)
     {
-        var groups = _families.OrderBy(g => layout == "unit-tail" && g.Items[0].Area == 1)
-            .ThenBy(g => !g.Items.Any(Anchor)).ThenBy(g => order == "category" ? g.Items[0].PrimaryCategory : "", StringComparer.Ordinal)
-            .ThenBy(g => order == "item-area" ? -g.Items.Max(i => i.Area) : -g.Items.Sum(i => i.Area)).ThenBy(g => -g.Items.Max(i => i.Area)).ThenBy(g => g.Key, StringComparer.Ordinal);
+        var groups = OrderedFamilies(order, layout == "unit-tail");
         var placed = _p.Fixed.ToList(); int floor = 0, bandTop = -1, bandHeight = 0; string? failed = null;
         foreach (var group in groups)
         {
@@ -237,7 +237,7 @@ public sealed class Native34Solver
             var choices = new List<(int Rows, int Penalty, int Y, int X, int H, int W, Placement[] Q)>(); var occ = Cells(placed);
             foreach (var t in Templates(ms, style))
             {
-                int penalty = style == "portrait" ? t.Landscape : t.Items.Count(a => a.GameOrientation != _currentOrientations.GetValueOrDefault(a.StableId, _docs[a.StableId].OriginalOrientation));
+                int penalty = t.Landscape;
                 int startY = anchor || layout != "shelf" ? 0 : bandTop >= 0 && t.Height == bandHeight && t.Rows == 1 ? bandTop : floor; bool found = false;
                 for (int y = startY; y + t.Height <= _p.Height && !found; y++) for (int x = 0; x + t.Width <= _p.Width; x++)
                 {
@@ -276,7 +276,8 @@ public sealed class Native34Solver
         foreach (var g in movable.GroupBy(Type, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
             var qs = g.ToArray(); var parts = Components(Cells(qs)); var maxArea = parts.Max(c => c.Count); bool interlock = qs.Length > 1 && Interlocking(_docs[qs[0].StableId]);
-            int mixed = interlock ? 0 : qs.Select(q => q.GameOrientation).Distinct().Count() - 1;
+            int mixed = qs.GroupBy(q => ShapeKey(_docs[q.StableId]), StringComparer.Ordinal)
+                .Sum(g => Interlocking(_docs[g.First().StableId]) ? 0 : Math.Max(0, g.Select(q => q.Mask.Signature).Distinct(StringComparer.Ordinal).Count() - 1));
             bands.Add(new(g.Key, qs.Length, parts.Count, qs.Sum(q => q.Mask.Area) - maxArea, qs.Select(q => q.Y).Distinct().Count(), mixed, qs.Count(q => q.Mask.Width <= q.Mask.Height), interlock, qs.Min(q => q.X), qs.Min(q => q.Y), qs.Max(q => q.Y + q.Mask.Height), qs.Max(q => q.Mask.Area)));
         }
         var occupied = Cells(all); var rows = occupied.GroupBy(c => c.Y).ToDictionary(g => g.Key, g => (lo: g.Min(c => c.X), hi: g.Max(c => c.X))); var cols = occupied.GroupBy(c => c.X).ToDictionary(g => g.Key, g => (lo: g.Min(c => c.Y), hi: g.Max(c => c.Y))); var middle = new HashSet<Cell>();
@@ -287,8 +288,14 @@ public sealed class Native34Solver
             var a = bands[i]; var b = bands[j]; if (Math.Min(a.Bottom, b.Bottom) > Math.Max(a.Top, b.Top) && (a.Top, a.Bottom) != (b.Top, b.Bottom)) overlaps++;
             if (a.ItemArea > b.ItemArea && a.Top > b.Top || b.ItemArea > a.ItemArea && b.Top > a.Top) inversions++;
         }
+        int cohortRows = movable.Where(q => q.Mask.Area >= 4).GroupBy(q => (q.Category, q.Mask.Signature))
+            .Where(g => g.Select(Type).Distinct(StringComparer.Ordinal).Count() > 1)
+            .Sum(g => Math.Max(0, g.Select(q => q.Y).Distinct().Count() - 1));
+        double rowDebt = bands.Sum(g => Math.Max(0, g.Rows - (int)Math.Ceiling(g.Count * _docs[movable.First(q=>Type(q)==g.Id).StableId].Orientations.Min(o=>o.Mask.Width) / (double)_p.Width)) / (double)g.Count);
         var anchors = movable.Where(q => Anchor(_docs[q.StableId])).ToArray(); int area = anchors.Sum(q => q.Mask.Area);
-        return new(bands.ToArray(), bands.Sum(g => Math.Max(0, g.Regions - 1)), bands.Sum(g => g.DetachedArea), bands.Sum(g => Math.Max(0, g.Rows - 1)), bands.Sum(g => g.Mixed), movable.Count(q => q.Mask.Width > q.Mask.Height), bands.Where(g => g.Interlock).Sum(g => g.Portrait), overlaps, bands.Sum(g => g.Left), inversions, middle.Count, LargestRectangle(middle), all.Length > 0 ? all.Max(q => q.Y + q.Mask.Height) : 0, anchors.Sum(q => (double)q.Mask.Area * q.Y), area, movable.Sum(q => (double)q.Mask.Area * (q.Y * _p.Width + q.X)));
+        int anchorBottom = anchors.Where(q=>_interlockAnchors.Contains(q.StableId)).Select(q=>q.Y+q.Mask.Height).DefaultIfEmpty().Max();
+        int intrusion = movable.Where(q=>!Anchor(_docs[q.StableId])).Sum(q=>q.Mask.Cells.Count(c=>q.Y+c.Y<anchorBottom));
+        return new(bands.ToArray(), bands.Sum(g => Math.Max(0, g.Regions - 1)), bands.Sum(g => g.DetachedArea), bands.Sum(g => Math.Max(0, g.Rows - 1)), bands.Sum(g => g.Mixed), movable.Count(q => q.Mask.Width > q.Mask.Height), bands.Where(g => g.Interlock).Sum(g => g.Portrait), overlaps, bands.Sum(g => g.Left), inversions, middle.Count, LargestRectangle(middle), all.Length > 0 ? all.Max(q => q.Y + q.Mask.Height) : 0, anchors.Sum(q => (double)q.Mask.Area * q.Y), area, movable.Sum(q => (double)q.Mask.Area * (q.Y * _p.Width + q.X)), cohortRows, rowDebt, intrusion);
     }
     private int LargestRectangle(HashSet<Cell> cells)
     {
@@ -306,89 +313,32 @@ public sealed class Native34Solver
         }
         return largest;
     }
-    private string Guard(Placement[] candidate, Placement[] reference, Metrics a, Metrics b)
-    {
-        if (!ValidateLayout(_p, candidate)) return "hard-validation";
-        var ag = a.Groups.ToDictionary(g => g.Id, StringComparer.Ordinal);
-        bool repairsDetached = b.Regions < a.Regions && b.Detached < a.Detached;
-        int repairedItems = a.Groups.Where(g => g.Regions > 1).Sum(g => g.Count);
-        int extraRowCost = b.Groups.Sum(g => Math.Max(0, g.Rows - ag[g.Id].Rows));
-        foreach (var g in b.Groups)
-        {
-            var r = ag[g.Id]; bool boundedWrap = repairsDetached && extraRowCost <= repairedItems && g.Regions == 1 && MacroMatches(candidate.Where(q => Type(q) == g.Id).ToArray());
-            if (g.Regions > r.Regions || (g.Rows > r.Rows && !boundedWrap) || g.Mixed > r.Mixed) return "family-connectivity-row-direction-regression";
-            if (g.Interlock && g.Portrait < r.Portrait) return "portrait-interlock-regression";
-            if (g.Count > 1 && !g.Interlock && g.Portrait < r.Portrait && g.Rows >= r.Rows && g.Regions >= r.Regions) return "unnecessary-landscape-regression";
-        }
-        var before = reference.Where(q => Anchor(_docs[q.StableId])).GroupBy(Type, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.OrderBy(q => q.Y).ThenBy(q => q.X).ToArray(), StringComparer.Ordinal);
-        foreach (var g in candidate.Where(q => Anchor(_docs[q.StableId])).GroupBy(Type, StringComparer.Ordinal))
-        {
-            var sorted = g.OrderBy(q => q.Y).ThenBy(q => q.X).ToArray(); var old = before[g.Key];
-            for (int i = 0; i < sorted.Length; i++) if (sorted[i].Y > old[i].Y || b.AnchorY >= a.AnchorY && sorted[i].Y == old[i].Y && sorted[i].X > old[i].X) return "front-anchor-lowered";
-        }
-        int usable = 0; foreach (bool v in _p.Usable) if (v) usable++; int largestItem = _p.Items.Select(i => i.Area).DefaultIfEmpty().Max(); int cap = Math.Min(usable / 10, 2 * largestItem);
-        if (Math.Max(b.Middle - a.Middle, b.LargestMiddle - a.LargestMiddle) > cap) return "local-scale-middle-void-budget";
-        int maxHeight = candidate.Select(q => q.Mask.Height).DefaultIfEmpty().Max(); if (b.Height - a.Height > maxHeight) return "local-scale-height-budget";
-        return "";
-    }
-    private bool MacroMatches(Placement[] qs)
-    {
-        if(qs.Length<2)return true;int left=qs.Min(q=>q.X),top=qs.Min(q=>q.Y);
-        string Geometry(IEnumerable<Placement> a)=>string.Join("|",a.Select(q=>$"{q.X},{q.Y}:{q.Mask.Signature}").OrderBy(x=>x,StringComparer.Ordinal));
-        string key=Geometry(qs.Select(q=>q with{X=q.X-left,Y=q.Y-top}));
-        var members=qs.OrderBy(q=>q.StableId,StringComparer.Ordinal).Select(q=>_docs[q.StableId]).ToArray();
-        return Templates(members,"portrait").Any(t=>Geometry(t.Items)==key);
-    }
+    // Only invariant geometry is a hard admission gate. Old positions, old score,
+    // row counts, and aesthetic anchors do not freeze movable objects in place.
+    private string Guard(Placement[] candidate) => ValidateLayout(_p, candidate) ? "" : "hard-validation";
     private double Value(Metrics m)
     {
         int n = Math.Max(1, _p.Items.Count), groups = Math.Max(1, m.Groups.Length), A = _p.Width * _p.Height;
-        return 1000.0 * m.Regions / n + 200.0 * m.Detached / Math.Max(1, _p.Items.Sum(i => i.Area)) + 50.0 * m.ExtraRows / n + 50.0 * m.Mixed / n
-            + .5 * m.Landscape / n + m.AnchorY / Math.Max(1, m.AnchorArea) / _p.Height + .5 * (n - m.PortraitInterlock) / n + (double)m.Overlaps / groups
-            + (double)m.Left / (_p.Width * groups) + .4 * m.Inversions / groups + .2 * m.Middle / A;
+        double pairs = Math.Max(1, groups * (groups - 1) / 2.0);
+        int totalArea = _p.Items.Sum(i=>i.Area), usable=0;foreach(bool cell in _p.Usable)if(cell)usable++;
+        double occupancy = (totalArea + _p.Fixed.Sum(q=>q.Mask.Area)) / (double)Math.Max(1,usable);
+        // Calibrated against the recorded five-machine counterexample: pair counts
+        // must be normalized by pairs, not grow without bound with family count.
+        // No term is a comparison with the incoming layout.
+        return 1000.0 * m.Regions / n + 200.0 * m.Detached / Math.Max(1, _p.Items.Sum(i => i.Area))
+            + 50.0 * m.RowDebt / groups + 30.0 * m.Mixed / n + 8.0 * m.Landscape / n
+            + 6.0 * m.AnchorY / Math.Max(1, m.AnchorArea) / _p.Height
+            + 2.0 * m.Height / _p.Height + 3.0 * m.Middle / A + 2.0 * m.LargestMiddle / A
+            + 3.0 * m.CohortRows / n + 4.0 * (1-occupancy) * m.AnchorIntrusion / Math.Max(1,totalArea-m.AnchorArea) + .1 * m.Overlaps / pairs + .1 * m.Inversions / pairs
+            + .1 * m.Left / (_p.Width * groups) + .1 * m.Priority / Math.Max(1, _p.Items.Sum(i => i.Area)) / A
+            + .5 * (n - m.PortraitInterlock) / n;
     }
-    private static string Summary(Metrics m) => $"regions={m.Regions},detached={m.Detached},extraRows={m.ExtraRows},mixed={m.Mixed},portraitInterlock={m.PortraitInterlock},anchorY={m.AnchorY},bandOverlaps={m.Overlaps},familyLeft={m.Left},largeInversions={m.Inversions},middle={m.Middle},middleRect={m.LargestMiddle},height={m.Height}";
-    private void Portfolio(Placement[] current)
-    {
-        Add(current, "original");
-        foreach (var layout in new[] { "shelf", "compact", "unit-tail" }) foreach (var order in new[] { "item-area", "family-area", "category" }) foreach (var style in new[] { "portrait", "current" }) RunStage($"shelf:{layout}:{order}:{style}", () => Shelf(order, style, layout));
-        foreach (var order in new[] { "area", "category", "constrained", "cohesive" }) foreach (bool whole in new[] { true, false }) RunStage($"joint:{order}:{(whole ? "whole" : "flexible")}", () => JointMask(current, order, whole));
-    }
+    private static string Summary(Metrics m) => $"regions={m.Regions},detached={m.Detached},extraRows={m.ExtraRows},mixed={m.Mixed},portraitInterlock={m.PortraitInterlock},anchorY={m.AnchorY},bandOverlaps={m.Overlaps},familyLeft={m.Left},largeInversions={m.Inversions},middle={m.Middle},middleRect={m.LargestMiddle},height={m.Height},cohortRows={m.CohortRows},rowDebt={m.RowDebt:F5},anchorIntrusion={m.AnchorIntrusion}";
     public LayoutResult Solve(LayoutProblem p, IReadOnlyList<Placement>? original = null)
     {
-        DeterministicSolver.ValidateProblem(p); if (NodeLimit < 1 || MaxPasses < 1) throw new ArgumentException("Positive deterministic budgets required.");
-        var watch = Stopwatch.StartNew(); _p = p; _model = FrozenPreferenceModel.LoadEmbedded(); _docs = p.Items.ToDictionary(i => i.StableId, StringComparer.Ordinal); _templates.Clear(); _runs.Clear(); _metricCache.Clear(); _interlockCache.Clear(); _optionCache.Clear(); _packed.Clear(); _performance.Clear(); _legalOrientations.Clear();
-        foreach (var i in p.Items) _legalOrientations[i.StableId] = i.Orientations.GroupBy(o => o.Mask.Signature, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.OrderBy(o => o.GameOrientation).First(), StringComparer.Ordinal);
-        _families = p.Items.GroupBy(i => Type(i) + "\u001e" + ShapeKey(i), StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal).Select(g => new Family(g.Key, g.OrderBy(i => i.StableId, StringComparer.Ordinal).ToArray())).ToList();
-        var incoming = (original ?? p.Items.Select(i => At(i, i.OriginalX, i.OriginalY, (i.OriginalMask != null ? new Orientation(i.OriginalOrientation,i.OriginalMask,false) : i.Orientations.First(o => o.GameOrientation == i.OriginalOrientation)))).ToArray()).OrderBy(q => q.StableId, StringComparer.Ordinal).ToArray();
-        if (!ValidateLayout(p, incoming)) throw new ArgumentException("Native34 requires a complete valid immutable input snapshot.");
-        var current = incoming; var seen = new HashSet<string>(StringComparer.Ordinal) { Key(current) }; bool fixedPoint = false; string reason = "pass-cap-original-restored"; int passes = 0;
-        for (; passes < MaxPasses; passes++)
-        {
-            _pass = passes; _pool.Clear(); _templates.Clear(); _optionCache.Clear(); _packed.Clear(); _currentOrientations = current.ToDictionary(q => q.StableId, q => q.GameOrientation, StringComparer.Ordinal); Portfolio(current); long scoringTicks = Stopwatch.GetTimestamp(), scoringBytes = GC.GetAllocatedBytesForCurrentThread(); var before = Measure(current); var options = new List<(Placement[] Q, Metrics M, double V, string Key)>(); var records = new List<CandidateTrace>();
-            foreach (var kv in _pool.OrderBy(k => k.Key, StringComparer.Ordinal))
-            {
-                var b = Measure(kv.Value.Q); string reject = Guard(kv.Value.Q, current, before, b); records.Add(new(Hash(kv.Key), kv.Value.Generators.ToArray(), true, reject, Summary(b), false));
-                if (reject.Length == 0) options.Add((kv.Value.Q, b, Value(b), kv.Key));
-            }
-            double[] Vector(Metrics m) => new double[] { m.Regions, m.Detached, m.ExtraRows, m.Mixed, m.AnchorY, -m.PortraitInterlock, m.Overlaps, m.Left, m.Inversions, m.Middle, m.LargestMiddle };
-            var vectors = options.ToDictionary(v => v.Key, v => Vector(v.M), StringComparer.Ordinal);
-            var front = options.Where(c => !options.Any(o => o.Key != c.Key && vectors[o.Key].Zip(vectors[c.Key], (x,y) => x <= y).All(v=>v) && vectors[o.Key].Zip(vectors[c.Key], (x,y) => x < y).Any(v=>v))).ToArray();
-            var dominated = options.Where(o => !front.Any(f => f.Key == o.Key)).Select(o=>Hash(o.Key)).ToHashSet(StringComparer.Ordinal);
-            records = records.Select(r => r.RejectedReason.Length == 0 && dominated.Contains(r.Signature) ? r with { RejectedReason = "pareto-dominated" } : r).ToList();
-            // Exact equivalent of the original lexicographic sort: secondary keys only
-            // matter within the minimum primary-key bucket. No candidate is pruned.
-            double bestValue = front.Min(v => v.V);
-            var chosen = front.Where(v => v.V == bestValue).OrderByDescending(v => _model.Value(FeatureVector(v.Q))).ThenBy(v => v.M.Priority).ThenBy(v => v.Key, StringComparer.Ordinal).First();
-            _performance.Add(new(_pass, "selection", (Stopwatch.GetTimestamp() - scoringTicks) * 1000.0 / Stopwatch.Frequency, GC.GetAllocatedBytesForCurrentThread() - scoringBytes, 0));
-            string oldKey = Key(current), chosenHash = Hash(chosen.Key); CandidateRecords = records.Select(r => r with { Selected = r.Signature == chosenHash }).ToArray();
-            if (chosen.Key == oldKey) { fixedPoint = true; reason = "fresh-native34-fixed-point"; break; }
-            if (!seen.Add(chosen.Key)) { reason = "cycle-original-restored"; break; }
-            current = chosen.Q;
-        }
-        var output = fixedPoint ? current : incoming; if (!ValidateLayout(p, output)) throw new InvalidOperationException("Final hard validation failed.");
-        var final = Measure(output); var score = DeterministicSolver.Evaluate(p, output); var space = DeterministicSolver.EvaluateSpaceMetrics(p, output); watch.Stop();
-        Diagnostic = $"engine=native34, fixedPoint={fixedPoint}, passes={passes + 1}, nodeLimit={NodeLimit}, candidates={CandidateRecords.Count}, reason={reason}, before=[{Summary(Measure(incoming))}], after=[{Summary(final)}], runs=[{string.Join(';', _runs)}]";
-        return new(true, output, score, !fixedPoint, false, watch.Elapsed, space.holes, space.narrow);
+        var session = CreateSession(p, original);
+        var progress = session.Advance(NodeLimit, 64);
+        return progress.Result;
     }
 
     // Same routes, DFS traversal order, memo equivalence and node caps as v3.12.
@@ -400,81 +350,6 @@ public sealed class Native34Solver
         BigInteger bits = 0;
         foreach (var c in cells) bits |= BigInteger.One << (c.Y * _p.Width + c.X);
         var result = new PackedTemplate(t, bits, first); _packed[t] = result; return result;
-    }
-    private void JointMask(Placement[] reference, string order, bool whole)
-    {
-        int W = _p.Width, H = _p.Height; var full = (BigInteger.One << (W * H)) - 1; BigInteger initial = 0;
-        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) if (!_p.Usable[x, y]) initial |= BigInteger.One << (y * W + x);
-        foreach (var c in Cells(_p.Fixed)) initial |= BigInteger.One << (c.Y * W + c.X);
-        var groups = _families.OrderBy(g => !g.Items.Any(Anchor)).ThenBy(g => order == "category" ? g.Items[0].PrimaryCategory : "", StringComparer.Ordinal)
-            .ThenBy(g => order == "constrained" ? g.Items[0].Orientations.Count : 0).ThenByDescending(g => g.Items.Sum(i => i.Area)).ThenBy(g => g.Key, StringComparer.Ordinal).ToArray();
-        var patterns = new List<(int Count, PackedTemplate P)>[groups.Length]; var counts = groups.Select(g => g.Items.Length).ToArray();
-        var anchors = groups.Select(g => g.Items.Any(Anchor) ? 0 : 1).ToArray();
-        var radix = new BigInteger[groups.Length]; BigInteger multiplier = 1, countCode = 0;
-        for (int gi = 0; gi < groups.Length; gi++)
-        {
-            radix[gi] = multiplier; countCode += multiplier * counts[gi]; multiplier *= counts[gi] + 1;
-            patterns[gi] = new(); int n = counts[gi]; var sizes = whole ? new[] { n } : Enumerable.Range(1, n).Reverse();
-            foreach (int count in sizes) foreach (var t in Templates(groups[gi].Items.Take(count).ToArray(), "portrait")) patterns[gi].Add((count, Pack(t)));
-            patterns[gi] = patterns[gi].OrderByDescending(t => t.Count).ThenBy(t => t.P.T.Rows).ThenBy(t => t.P.T.Landscape).ThenBy(t => t.P.T.Height).ThenBy(t => t.P.T.Width).ToList();
-        }
-        var path = new List<SearchChoice>(); Placement[]? answer = null; int nodes = 0; var memo = new HashSet<SearchState>(); int leftArea = groups.Sum(g => g.Items.Sum(i => i.Area));
-        int blocked = CountBits(initial); int holes = W * H - blocked - leftArea;
-        Placement[] Materialize(SearchChoice c)
-        {
-            var items = c.Pattern.T.Items; var result = new Placement[items.Length];
-            for (int i = 0; i < items.Length; i++)
-            {
-                // groups is initialized before any recursive delegate is invoked (SDK 6 closure-flow analysis).
-                var item = groups![c.Gi].Items[c.Offset + i]; var q = items[i];
-                result[i] = At(item, q.X + c.X, q.Y + c.Y, _legalOrientations[item.StableId][q.Mask.Signature]);
-            }
-            return result;
-        }
-        int CompareChoices(SearchChoice a, SearchChoice b)
-        {
-            int c = a.Continuation.CompareTo(b.Continuation); if (c != 0) return c;
-            c = a.Anchor.CompareTo(b.Anchor); if (c != 0) return c;
-            if (order == "cohesive") { c = a.Pattern.T.Rows.CompareTo(b.Pattern.T.Rows); if (c != 0) return c; }
-            c = b.Count.CompareTo(a.Count); if (c != 0) return c;
-            c = a.Pattern.T.Rows.CompareTo(b.Pattern.T.Rows); if (c != 0) return c;
-            c = a.Pattern.T.Landscape.CompareTo(b.Pattern.T.Landscape); if (c != 0) return c;
-            c = a.Gi.CompareTo(b.Gi); if (c != 0) return c;
-            c = StringComparer.Ordinal.Compare(a.TieKey ??= Key(Materialize(a)), b.TieKey ??= Key(Materialize(b)));
-            return c != 0 ? c : a.Sequence.CompareTo(b.Sequence); // preserve stable LINQ ties
-        }
-        bool Dfs(BigInteger occupied, BigInteger remainingCode, int remainingArea, int holesLeft, int last)
-        {
-            if (++nodes > NodeLimit) return false;
-            if (remainingArea == 0) { answer = path.SelectMany(Materialize).ToArray(); return true; }
-            if (!memo.Add(new(occupied, remainingCode))) return false;
-            var free = full ^ occupied; if (free.IsZero) return false; int first = LowestBit(free); int fy = first / W, fx = first % W;
-            var choices = new List<SearchChoice>();
-            for (int gi = 0; gi < groups.Length; gi++)
-            {
-                if (counts[gi] == 0) continue;
-                foreach (var entry in patterns[gi])
-                {
-                    if (entry.Count > counts[gi]) continue;
-                    var packed = entry.P; var t = packed.T; int x = fx - packed.First.X, y = fy - packed.First.Y;
-                    if (x < 0 || y < 0 || x + t.Width > W || y + t.Height > H) continue;
-                    BigInteger bits = packed.Bits << (y * W + x);
-                    if ((bits & occupied) != 0) continue;
-                    choices.Add(new() { Gi = gi, Count = entry.Count, X = x, Y = y, Offset = groups[gi].Items.Length - counts[gi], Pattern = packed, Bits = bits, Anchor = anchors[gi], Continuation = gi == last ? 0 : 1, Sequence = choices.Count });
-                }
-            }
-            choices.Sort(CompareChoices);
-            foreach (var c in choices)
-            {
-                counts[c.Gi] -= c.Count; path.Add(c);
-                if (Dfs(occupied | c.Bits, remainingCode - radix[c.Gi] * c.Count, remainingArea - groups[c.Gi].Items[0].Area * c.Count, holesLeft, c.Gi)) return true;
-                path.RemoveAt(path.Count - 1); counts[c.Gi] += c.Count; if (nodes >= NodeLimit) return false;
-            }
-            if (holesLeft > 0 && Dfs(occupied | (BigInteger.One << first), remainingCode, remainingArea, holesLeft - 1, last)) return true;
-            return false;
-        }
-        if (holes >= 0) Dfs(initial, countCode, leftArea, holes, -1); string gid = $"global:joint-mask:{order}:{(whole ? "whole" : "flexible")}";
-        _lastNodes = nodes; _runs.Add($"{gid}:nodes={nodes}:complete={answer != null}"); if (answer != null) Add(answer, gid);
     }
     private static int LowestBit(BigInteger value)
     {

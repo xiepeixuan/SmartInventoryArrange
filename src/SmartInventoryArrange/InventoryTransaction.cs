@@ -1,4 +1,4 @@
-using Il2Cpp;
+﻿using Il2Cpp;
 using SmartInventoryArrange.Core;
 
 namespace SmartInventoryArrange;
@@ -8,11 +8,14 @@ internal sealed class InventoryTransaction
     private sealed record Snap(GameItem Item, string StableId, GridShape OriginalShape, string Fingerprint, LayoutItem Model);
     private sealed record DiagnosticItem(string StableId, string Name, string ItemId, int Width, int Height, string Type, string[] Categories, int Orientation, bool CanRotate, bool Movable, int OriginalX, int OriginalY);
     private readonly GameGridInventory _inventory;
+    private readonly InventoryObservation _capturedObservation;
     private readonly List<Snap> _movable;
     private readonly List<(GameItem item, GridShape shape)> _allOriginal;
     private readonly int _originX;
     private readonly int _originY;
     private readonly IReadOnlyList<DiagnosticItem> _diagnostics;
+    private readonly IReadOnlyList<(LayoutItem Model,bool Movable)> _capturedModels;
+    public string SessionContext { get; }
     public LayoutProblem Problem { get; }
     public IReadOnlyList<Placement> OriginalPlacements { get; }
     public int Width => Problem.Width;
@@ -24,8 +27,14 @@ internal sealed class InventoryTransaction
     public int UnknownCategoryCount => Problem.Items.Count(i => i.PrimaryCategory == "~unknown");
 
     private InventoryTransaction(GameGridInventory inventory, List<Snap> movable, List<(GameItem, GridShape)> allOriginal,
-        LayoutProblem problem, IReadOnlyList<Placement> originals, int originX, int originY, IReadOnlyList<DiagnosticItem> diagnostics)
-    { _inventory = inventory; _movable = movable; _allOriginal = allOriginal; Problem = problem; OriginalPlacements = originals; _originX = originX; _originY = originY; _diagnostics = diagnostics; }
+        LayoutProblem problem, IReadOnlyList<Placement> originals, int originX, int originY, IReadOnlyList<DiagnosticItem> diagnostics, IReadOnlyList<(LayoutItem Model,bool Movable)> capturedModels, InventoryObservation capturedObservation)
+    { _inventory = inventory; _capturedObservation=capturedObservation; _movable = movable; _allOriginal = allOriginal; Problem = problem; OriginalPlacements = originals; _originX = originX; _originY = originY; _diagnostics = diagnostics; _capturedModels=capturedModels;
+        // Runtime identity is used only for invalidation, never layout ordering.
+        SessionContext=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            new { inventory=inventory.Pointer.ToString(), originX, originY,
+                instances=allOriginal.Select(x=>new{pointer=x.Item1.Pointer.ToString(),state=Fingerprint(x.Item1)}).OrderBy(x=>x.pointer,StringComparer.Ordinal),
+                movableIdentity=movable.Select(x=>new{x.StableId,pointer=x.Item.Pointer.ToString()}).OrderBy(x=>x.StableId,StringComparer.Ordinal) })));
+    }
 
     public static InventoryTransaction Capture(GameGridInventory inventory)
     {
@@ -35,15 +44,22 @@ internal sealed class InventoryTransaction
         var usable = new bool[width, height];
         for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) usable[x, y] = container.Get(x + container.minX, y + container.minY) == 0;
 
+        var capturedModels=new List<(LayoutItem Model,bool Movable)>();
+        var observedItems=new List<SnapshotItem>();
+        string capturedGeometry=Geometry(inventory);
         var movable = new List<Snap>(); var fixedItems = new List<Placement>(); var allOriginal = new List<(GameItem, GridShape)>();
         var raw = new List<(GameItem item, string id, GridShape shape, List<string> categories, bool movable)>();
         var children = inventory.childItems;
+        var idCounts=new Dictionary<string,int>(StringComparer.Ordinal);
+        for(int k=0;k<children.Count;k++){var item=children[k];if(item==null||item.modifiedShape==null)continue;string key=$"{item.identifier}\u001f{item.uniqueId:D10}";idCounts[key]=idCounts.GetValueOrDefault(key)+1;}
         for (int i = 0; i < children.Count; i++)
         {
-            var item = children[i]; if (item == null || item.modifiedShape == null) continue;
+            var item = children[i];
+            if(item==null||item.modifiedShape==null)throw new InvalidOperationException($"Snapshot capture: missing item or shape at child={i}.");
+            string id = StableId(item, i, idCounts); var cats = Categories(item);
+            bool canMove = item.MayRemove() && SnapshotConsistency.SameNativeObject(item.parentInventory?.Pointer??IntPtr.Zero, inventory.Pointer);
+            observedItems.Add(Observe(item,id,canMove)); // Before Clone or direction enumeration.
             var shape = item.modifiedShape.Clone(); allOriginal.Add((item, shape));
-            string id = StableId(item, i); var cats = Categories(item);
-            bool canMove = item.MayRemove() && item.parentInventory == inventory;
             raw.Add((item, id, shape, cats, canMove));
         }
         var order = raw.SelectMany(r => r.categories).Distinct(StringComparer.Ordinal).OrderBy(CategoryRank).ThenBy(x => x, StringComparer.Ordinal)
@@ -57,6 +73,7 @@ internal sealed class InventoryTransaction
             var model = new LayoutItem { StableId = r.id, ItemId = r.item.identifier, PrimaryCategory = primary, Categories = r.categories,
                 Orientations = orientations, OriginalMask = Mask(r.shape), OriginalOrientation = r.shape.orientation, OriginalX = r.shape.minX - container.minX, OriginalY = r.shape.minY - container.minY,
                 VisualPriority = VisualPriority(primary) };
+            capturedModels.Add((model,r.movable));
             if (r.movable) movable.Add(new Snap(r.item, r.id, r.shape, Fingerprint(r.item), model));
             else fixedItems.Add(new Placement(r.id, r.shape.minX - container.minX, r.shape.minY - container.minY, r.shape.orientation, Mask(r.shape), "~fixed", false));
         }
@@ -80,7 +97,27 @@ internal sealed class InventoryTransaction
                 x.shape.minX - container.minX, x.shape.minY - container.minY);
         }).ToArray();
         DeterministicSolver.ValidateProblem(problem);
-        return new(inventory, movable, allOriginal, problem, originals, container.minX, container.minY, diagnostics);
+        var observation=new InventoryObservation(inventory.Pointer,capturedGeometry,Array.AsReadOnly(observedItems.ToArray()));
+        var transaction=new InventoryTransaction(inventory, movable, allOriginal, problem, originals, container.minX, container.minY, diagnostics, capturedModels,observation);
+        transaction.AssertSnapshotCurrent("capture-complete");
+        return transaction;
+    }
+
+    public string WriteExactInput()
+    {
+        string directory=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"MelonLoader","Logs","SmartInventoryArrange-Inputs");Directory.CreateDirectory(directory);
+        string path=Path.Combine(directory,DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".json");
+        var state=_movable.ToDictionary(s=>s.StableId,s=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s.Fingerprint))),StringComparer.Ordinal);
+        var disabled=new List<int[]>();for(int y=0;y<Height;y++)for(int x=0;x<Width;x++)if(!Problem.Usable[x,y])disabled.Add(new[]{x,y});
+        var data=new{schemaVersion=1,version="3.17.2",capturedAt=DateTimeOffset.Now,
+            provenance=new{nativeMasks=true,nativeStableIds=true,nativeStateVerified=false},
+            @case=new{input=new{width=Width,height=Height,disabled,items=_capturedModels.Select(s=>new{
+                stableId=s.Model.StableId,itemId=s.Model.ItemId,category=s.Movable?s.Model.PrimaryCategory:"~fixed",categories=s.Model.Categories,
+                priority=s.Model.VisualPriority,@fixed=!s.Movable,orientations=s.Model.Orientations.Select(o=>new{orientation=o.GameOrientation,cells=o.Mask.Cells.Select(c=>new[]{c.X,c.Y})})})},
+                baseline=_capturedModels.Select(s=>new{stableId=s.Model.StableId,itemId=s.Model.ItemId,x=s.Model.OriginalX,y=s.Model.OriginalY,orientation=s.Model.OriginalOrientation,
+                    category=s.Movable?s.Model.PrimaryCategory:"~fixed",@fixed=!s.Movable,stateToken=state.GetValueOrDefault(s.Model.StableId,"fixed-snapshot"),
+                    cells=s.Model.OriginalMask!.Cells.Select(c=>new{x=c.X,y=c.Y})})}};
+        File.WriteAllText(path,System.Text.Json.JsonSerializer.Serialize(data),new System.Text.UTF8Encoding(false));return path;
     }
 
     public string WriteDiagnosticSnapshot()
@@ -152,6 +189,40 @@ internal sealed class InventoryTransaction
         b.AppendLine();
         File.AppendAllText(path, b.ToString(), new System.Text.UTF8Encoding(false));
     }
+    // Observe native state only on the main thread. Compare immutable values,
+    // not CLR wrapper identity or a potentially reconstructed Clone wrapper.
+    private static string Geometry(GameGridInventory inventory)
+    {
+        var shape=inventory.inventoryShape??throw new InvalidOperationException("Snapshot guard: container shape missing.");
+        var b=new System.Text.StringBuilder().Append(shape.minX).Append(',').Append(shape.minY).Append(',').Append(shape.width).Append(',').Append(shape.height).Append(':');
+        for(int y=0;y<shape.height;y++)for(int x=0;x<shape.width;x++)b.Append(shape.Get(x+shape.minX,y+shape.minY)==0?'1':'0');
+        return b.ToString();
+    }
+    private static SnapshotItem Observe(GameItem item,string stableId,bool movable)
+    {
+        var shape=item.modifiedShape;
+        var pose=shape==null?null:new SnapshotPose(shape.minX,shape.minY,shape.orientation,shape.globalWidth,shape.globalHeight,Mask(shape).Signature);
+        return new(item.Pointer,item.parentInventory?.Pointer??IntPtr.Zero,stableId,movable,Fingerprint(item),pose);
+    }
+    public void AssertSnapshotCurrent(string stage="before-apply")
+    {
+        var captured=_capturedObservation.Items.ToDictionary(x=>x.Pointer);
+        var items=new List<SnapshotItem>();
+        int wrapperAliases=0;
+        for(int k=0;k<_inventory.childItems.Count;k++)
+        {
+            var item=_inventory.childItems[k];
+            if(item==null){items.Add(new(0,0,$"child-{k}",false,"null",null));continue;}
+            captured.TryGetValue(item.Pointer,out var old);
+            var parent=item.parentInventory;
+            if(parent!=null&&!ReferenceEquals(parent,_inventory)&&SnapshotConsistency.SameNativeObject(parent.Pointer,_inventory.Pointer))wrapperAliases++;
+            items.Add(Observe(item,old?.StableId??item.identifier,old?.Movable??false));
+        }
+        SnapshotConsistency.AssertSame(_capturedObservation,new(_inventory.Pointer,Geometry(_inventory),Array.AsReadOnly(items.ToArray())),stage);
+        MelonLoader.MelonLogger.Msg($"Smart arrange snapshot guard passed: stage={stage}, members={items.Count}, nativeWrapperAliases={wrapperAliases}, changedFields=0");
+    }
+    public void RestoreCapturedSnapshot()=>Rollback();
+
     public void Apply(IReadOnlyList<Placement> placements)
     {
         if (placements.Count != _movable.Count || placements.Select(p => p.StableId).Distinct(StringComparer.Ordinal).Count() != _movable.Count)
@@ -203,7 +274,11 @@ internal sealed class InventoryTransaction
         foreach (var s in _movable) if (Fingerprint(s.Item) != s.Fingerprint) throw new InvalidOperationException("Item state changed during arrangement: " + s.StableId);
     }
 
-    private static string StableId(GameItem item, int index) => $"{item.identifier}\u001f{item.uniqueId:D10}\u001f{index:D6}";
+    private static string StableId(GameItem item,int index,IReadOnlyDictionary<string,int> counts)
+    {
+        string key=$"{item.identifier}\u001f{item.uniqueId:D10}";
+        return InstanceIdentity.From(item.identifier,item.uniqueId,index,counts[key]);
+    }
     private static string Fingerprint(GameItem i) => $"{i.identifier}|{i.uniqueId}|{i.unitCount}|{i.state}";
 
     private static List<string> Categories(GameItem item)

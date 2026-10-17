@@ -15,6 +15,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.Nativ
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.PerformanceSafety", "tests\SmartInventoryArrange.PerformanceSafety\SmartInventoryArrange.PerformanceSafety.csproj", "{A50BBD0D-64F4-4D62-A8EE-B1ADAF7CBDE6}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.SnapshotSafety", "tests\SmartInventoryArrange.SnapshotSafety\SmartInventoryArrange.SnapshotSafety.csproj", "{A1A5E738-AF40-4B24-AD32-2DABC1842995}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.SessionSafety", "tests\SmartInventoryArrange.SessionSafety\SmartInventoryArrange.SessionSafety.csproj", "{E1148695-181C-4702-9164-6CB693A6DFA2}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.UiText", "tests\SmartInventoryArrange.UiText\SmartInventoryArrange.UiText.csproj", "{51051D48-0EA1-4499-84D6-C4AB55B36A62}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,11 +46,26 @@ Global
 		{A50BBD0D-64F4-4D62-A8EE-B1ADAF7CBDE6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A50BBD0D-64F4-4D62-A8EE-B1ADAF7CBDE6}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A50BBD0D-64F4-4D62-A8EE-B1ADAF7CBDE6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1A5E738-AF40-4B24-AD32-2DABC1842995}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1A5E738-AF40-4B24-AD32-2DABC1842995}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1A5E738-AF40-4B24-AD32-2DABC1842995}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1A5E738-AF40-4B24-AD32-2DABC1842995}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E1148695-181C-4702-9164-6CB693A6DFA2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E1148695-181C-4702-9164-6CB693A6DFA2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E1148695-181C-4702-9164-6CB693A6DFA2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E1148695-181C-4702-9164-6CB693A6DFA2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{51051D48-0EA1-4499-84D6-C4AB55B36A62}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{51051D48-0EA1-4499-84D6-C4AB55B36A62}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{51051D48-0EA1-4499-84D6-C4AB55B36A62}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{51051D48-0EA1-4499-84D6-C4AB55B36A62}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E8C367AE-D80D-4C6D-8427-A498A50413E8} = {0B50D5FF-F891-4087-A3C1-10467A8F7805}
 		{87C08E40-B370-484F-9D02-0C68DE4030D3} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 		{9A563342-290B-45F0-8E4B-010136F1B623} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 		{A50BBD0D-64F4-4D62-A8EE-B1ADAF7CBDE6} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
+		{A1A5E738-AF40-4B24-AD32-2DABC1842995} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
+		{E1148695-181C-4702-9164-6CB693A6DFA2} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
+		{51051D48-0EA1-4499-84D6-C4AB55B36A62} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 	EndGlobalSection
 EndGlobal

@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Text;
 using System.Threading.Tasks;
 using HarmonyLib;
@@ -7,7 +7,7 @@ using MelonLoader;
 using SmartInventoryArrange.Core;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.13.0", "OpenAI")]
+[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.17.2", "OpenAI")]
 [assembly: MelonGame(null, "Probably Stolen")]
 
 namespace SmartInventoryArrange;
@@ -15,11 +15,11 @@ namespace SmartInventoryArrange;
 public sealed class SmartArrangeMod : MelonMod
 {
     internal static bool Busy;
-    private static string? _lastOptimizedSignature;
+    private static readonly GlobalArrangeController Search = new();
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg("SmartInventoryArrange v3.13.0 loaded: native34 global family repack + row bands + semantic anchors + interlocks + immutable transaction + coordinate snapshots; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
+        LoggerInstance.Msg("SmartInventoryArrange v3.17.2 loaded: v3.13-derived empty-grid global repack + preserved search frontier + removal reset + native-pointer snapshot guard + field diagnostics; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
         LoggerInstance.Msg("Patching ItemContextHandler.OnEventInit, TriggerButton and OnEventReset");
     }
 
@@ -31,6 +31,7 @@ public sealed class SmartArrangeMod : MelonMod
         {
             var tx = InventoryTransaction.Capture(inventory);
             string snapshotPath = tx.WriteDiagnosticSnapshot();
+            MelonLogger.Msg($"Smart arrange exact input: {tx.WriteExactInput()}");
             double occupancy = DeterministicSolver.OccupancyRatio(tx.Problem);
             string mode = DeterministicSolver.DensityMode(tx.Problem);
             MelonLogger.Msg($"Smart arrange snapshot: {tx.Width}x{tx.Height}, occupancy={occupancy:P1}, mode={mode}, movable={tx.MovableCount}, fixed={tx.FixedCount}, categories={tx.CategoryCount}, multi-category={tx.MultiCategoryCount}, unknown={tx.UnknownCategoryCount}, details={snapshotPath}");
@@ -42,35 +43,27 @@ public sealed class SmartArrangeMod : MelonMod
                 return;
             }
 
-            string inputSignature = LayoutSignature(tx.Problem, tx.OriginalPlacements);
-            if (StringComparer.Ordinal.Equals(inputSignature, _lastOptimizedSignature))
-            {
-                MelonLogger.Msg("Smart arrange skipped: current layout already matches the last deterministic result.");
-                Busy = false;
-                return;
-            }
-
-            int cells = tx.Width * tx.Height;
-            int budgetMs = cells <= 36 ? 100 : cells <= 100 ? 220 : 400;
-            int beam = cells <= 36 ? 24 : cells <= 100 ? 32 : 40;
-            int candidates = cells <= 36 ? 20 : 28;
-            MelonCoroutines.Start(SolveAndApply(tx, budgetMs, beam, candidates));
+            var request=Search.Begin(tx.Problem,tx.OriginalPlacements,tx.SessionContext);
+            MelonLogger.Msg($"Smart arrange request: action={(request.Restarted ? "fresh-global" : "resume-frontier")}, input={request.InputSignature}, nodeBudget={request.NodeBudget}, previousNodes={request.Session.TotalNodes}");
+            MelonCoroutines.Start(SolveAndApply(tx,request));
         }
         catch (Exception ex)
         {
             Busy = false;
+            Search.Reset();
             MelonLogger.Error("Smart arrange snapshot cancelled: " + ex);
         }
     }
 
-    private static IEnumerator SolveAndApply(InventoryTransaction tx, int budgetMs, int beam, int candidates)
+    private static IEnumerator SolveAndApply(InventoryTransaction tx, GlobalArrangeController.Request request)
     {
-        var task = Task.Run(() =>
+        bool applied=false;
+        bool applicationStarted=false;
+        var task=Task.Run(()=>
         {
-            var solver = new Native34Solver();
-            var result = solver.Solve(tx.Problem, tx.OriginalPlacements);
-            var baseline = DeterministicSolver.Evaluate(tx.Problem, tx.OriginalPlacements);
-            return (result, baseline, solver.Diagnostic);
+            var progress=request.Session.Advance(request.NodeBudget,request.SolutionBatch);
+            var baseline=DeterministicSolver.Evaluate(tx.Problem,tx.OriginalPlacements); // telemetry only
+            return (result:progress.Result,baseline,Diagnostic:request.Session.Diagnostic,progress);
         });
 
         while (!task.IsCompleted) yield return null;
@@ -84,30 +77,35 @@ public sealed class SmartArrangeMod : MelonMod
 
             var solved = task.Result;
             var result = solved.result;
+            tx.AssertSnapshotCurrent();
+            MelonLogger.Msg($"Smart arrange search complete: batch={solved.progress.Batch}, newNodes={solved.progress.NewNodes}, totalNodes={solved.progress.TotalNodes}, newCandidates={solved.progress.NewCandidates}, uniqueCandidates={solved.progress.TotalCandidates}, canContinue={solved.progress.CanContinue}, reason={solved.progress.Reason}");
             int comparison = Native34Solver.SameLayout(result.Placements, tx.OriginalPlacements) ? 0 : 1;
             if (!Native34Solver.ValidateLayout(tx.Problem, result.Placements))
                 throw new InvalidOperationException("Native34 final immutable geometry validation failed.");
             if (!result.Complete || comparison <= 0)
             {
-                _lastOptimizedSignature = LayoutSignature(tx.Problem, tx.OriginalPlacements);
+                Search.Complete(request,tx.Problem,tx.OriginalPlacements);
                 tx.WriteResultSnapshot(tx.OriginalPlacements, "kept-original");
-                string reason = !result.Complete ? "candidate-incomplete" : comparison == 0 ? "visual-score-equal" : "baseline-visual-score-better";
+                string reason = result.UsedFallback ? "no-fresh-complete-candidate-original-preserved" : solved.progress.Reason;
                 var baselineSpace = DeterministicSolver.EvaluateSpaceMetrics(tx.Problem, tx.OriginalPlacements);
                 string firstDifference = DeterministicSolver.FirstDifferingMetric(tx.Problem, result.Score, solved.baseline);
                 MelonLogger.Msg($"Smart arrange kept original layout: reason={reason}, firstDifference={firstDifference}, mode={DeterministicSolver.DensityMode(tx.Problem)}, occupancy={DeterministicSolver.OccupancyRatio(tx.Problem):P1}, candidate complete={result.Complete}, timeout={result.TimedOut}, fallback={result.UsedFallback}, elapsed={result.Elapsed.TotalMilliseconds:F1}ms, candidateSpace=holes:{result.Holes},narrow:{result.NarrowFragments}, baselineSpace=holes:{baselineSpace.holes},narrow:{baselineSpace.narrow},ragged:{baselineSpace.raggedness}, candidateVisual={VisualSummary(result.Score)}, baselineVisual={VisualSummary(solved.baseline)}, diagnostic={solved.Diagnostic}");
                 yield break;
             }
 
+            applicationStarted=true;
             tx.Apply(result.Placements);
+            applied=true;
             tx.WriteResultSnapshot(result.Placements, "applied");
-            _lastOptimizedSignature = LayoutSignature(tx.Problem, result.Placements);
+            Search.Complete(request,tx.Problem,result.Placements);
             int rotations = result.Placements.Count(p => p.Rotated);
             MelonLogger.Msg($"Smart arrange success: mode={DeterministicSolver.DensityMode(tx.Problem)}, occupancy={DeterministicSolver.OccupancyRatio(tx.Problem):P1}, placed={result.Placements.Count}, horizontalExceptions={rotations}, holes={result.Holes}, narrowFragments={result.NarrowFragments}, elapsed={result.Elapsed.TotalMilliseconds:F1}ms, fallback={result.UsedFallback}, visual={VisualSummary(result.Score)}, splitGroups={DeterministicSolver.DescribeSplits(result.Placements)}, native34={solved.Diagnostic}");
         }
         catch (Exception ex)
         {
-            try { tx.WriteResultSnapshot(tx.OriginalPlacements, "cancelled-restored"); } catch (Exception logEx) { MelonLogger.Warning("Final coordinate snapshot failed: " + logEx.Message); }
-            MelonLogger.Error("Smart arrange cancelled/restored: " + ex);
+            Search.Reset();
+            try { if(applied)tx.RestoreCapturedSnapshot(); tx.WriteResultSnapshot(tx.OriginalPlacements, applied?"cancelled-restored":applicationStarted?"application-failed":"cancelled-before-apply"); } catch (Exception logEx) { MelonLogger.Warning("Final coordinate snapshot failed: " + logEx.Message); }
+            MelonLogger.Error($"Smart arrange {(applied?"cancelled-restored":applicationStarted?"application-failed":"cancelled-before-apply")}: " + ex);
         }
         finally
         {
@@ -118,19 +116,7 @@ public sealed class SmartArrangeMod : MelonMod
     private static string VisualSummary(LayoutScore score) =>
         $"typeSplits={-score.NegativeTypeRuns},typeRows={score.SameTypeRowAlignment},typeEdges={score.SameTypeHorizontalContact},cohortSplits={-score.NegativeCohortRuns},cohortRows={score.CohortRowAlignment},cohortEdges={score.CohortHorizontalContact}";
 
-    private static string LayoutSignature(LayoutProblem p, IEnumerable<Placement> placements)
-    {
-        var b = new StringBuilder(128 + p.Items.Count * 48);
-        b.Append(p.Width).Append('x').Append(p.Height).Append('|');
-        for (int y = 0; y < p.Height; y++)
-            for (int x = 0; x < p.Width; x++) b.Append(p.Usable[x, y] ? '1' : '0');
-        foreach (var item in p.Items.OrderBy(x => x.StableId, StringComparer.Ordinal))
-            b.Append('|').Append(item.StableId).Append(':').Append(item.PrimaryCategory).Append(':')
-             .Append(string.Join(',', item.Orientations.Select(x => x.Mask.Signature)));
-        foreach (var q in placements.OrderBy(x => x.StableId, StringComparer.Ordinal))
-            b.Append('|').Append(q.StableId).Append('@').Append(q.X).Append(',').Append(q.Y).Append(',').Append(q.GameOrientation);
-        return b.ToString();
-    }
+
 }
 [HarmonyPatch(typeof(ItemContextHandler), nameof(ItemContextHandler.OnEventInit))]
 internal static class ContextInitPatch
@@ -178,7 +164,7 @@ internal static class NativeSmartMenu
         var source = owner.buttonSortSmallEnd;
         int rowHeight = Math.Max(1, source.heightPixels);
         int width = Math.Max(owner.sortWindow.widthPixels, nativeButtons.Max(x => x.widthPixels));
-        string label = ContextInitPatch.IsChinese() ? "智能排列" : "Smart Arrange";
+        string label = ContextInitPatch.IsChinese() ? "\u667A\u80FD\u6392\u5217" : "Smart Arrange";
 
         Button = new RichTextElement(false, width, rowHeight, true);
         Button.SetPadding(source.leftPadding, source.rightPadding, source.topPadding, source.bottomPadding);

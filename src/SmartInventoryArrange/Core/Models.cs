@@ -105,3 +105,14 @@ public sealed record LayoutResult(bool Complete, IReadOnlyList<Placement> Placem
     bool UsedFallback, bool TimedOut, TimeSpan Elapsed, int Holes, int NarrowFragments);
 
 
+
+/// <summary>Native unique ID is stable across child-list reordering. An absent or
+/// duplicated native ID uses an explicit snapshot index, never an object address.</summary>
+public static class InstanceIdentity
+{
+    public static string From(string itemId,int uniqueId,int index,int multiplicity)
+    {
+        string key=$"{itemId}\u001f{uniqueId:D10}";
+        return uniqueId!=0&&multiplicity==1?key:$"{key}\u001f{index:D6}";
+    }
+}
