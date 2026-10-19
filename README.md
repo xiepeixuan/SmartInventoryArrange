@@ -2,13 +2,16 @@
 
 为 **Probably Stolen Demo** 提供确定性、视觉优先的库存整理。
 
-**当前版本：v3.17.2（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.2) · [验证记录](docs/VALIDATION.md)
+**当前版本：v3.17.8（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.8) · [验证记录](docs/VALIDATION.md)
 
-## v3.13 → v3.17.2 更新说明
+## v3.17.6 → v3.17.8 更新说明
 
-1. 改善排列不充分的问题：对全部可移动物品进行全局重排，减少原布局限制。
-2. 修复取出部分物品后，再次智能排列不生效的问题。
-3. 修复连续点击直接提示“已是最佳排列”并跳过的问题，现在会继续搜索更好的布局。
+- 物资箱智能排列时保持默认横向，其他物品旋转规则不变。
+- 新增“保留容器排列”：让带内部储物窗口的机器、货架、箱子等保持原位不转动，只整理周围物品；不按类别一刀切，空容器或关闭窗口也可能固定。
+- 配置 `KeepContainers` 默认开启；原“智能排列”不增加本固定规则。
+- 核心装箱/评分策略与组内真实状态排序保持不变，保留完整快照、资格复核和事务回滚。
+
+[合并更新日志及上一公开版以来的补充](docs/CHANGELOG.md) · [组内状态排序规则](docs/SORTING_RULES.md)
 
 ## 排列思路
 
@@ -22,19 +25,26 @@
 
 Probably Stolen Demo **0.46D** · Unity **2021.3.45f2 / IL2CPP** · MelonLoader **0.7.3 x64** · Windows / .NET 6。
 
-1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.2)下载ZIP。
+1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.8)下载ZIP。
 2. 将当前DLL备份到Mods以外；只复制新的 `SmartInventoryArrange.dll` 至 `<游戏目录>/Mods`。
-3. 启动后在日志确认加载 `v3.17.2`。使用DLL不需要Python、离线资源或源码依赖。
+3. 启动后在日志确认加载 `v3.17.8`。使用DLL不需要Python、离线资源或源码依赖。
 
 发布DLL的SHA256：
 
 ```text
-AA8D0E9EA378EE3F5AFAC415F3A2887812F564F3898C99E7C0AEB2B4A32EEEBC
+4DC8598ED85F990C163F533F8541948250F5782C7F983FD44A97515CF37B4CC9
 ```
 
 ## 使用与保护
 
-容器右键 → 游戏排序菜单 → **智能排列 / Smart Arrange**。运行中重复请求不会并发启动；完成后再次点击会继续搜索。
+容器右键 → 游戏排序菜单：
+
+- **智能排列 / Smart Arrange**：普通全局智能排列。
+- **保留容器排列 / Preserve Containers**：在 `KeepContainers=true` 时，`item.contentWindow != null` 的实例保持原坐标和朝向，其他物品绕开固定障碍；不检查内容物数量或窗口显示状态。
+
+本 Mod 配置为 `[SmartInventoryArrange] KeepContainers = true`（默认）；关闭后不额外固定，原生锁定规则仍有效。不读取其他 Mod 的 `[InventorySorter]` 配置。固定的物资箱保留当前实际方向；可移动物资箱按默认横向排列。
+
+同 ID 合法兼容槽位内按名称和已确认真实状态顺序分配实例，只读状态，不改变物品鉴定标记或内部物品；详见[规则](docs/SORTING_RULES.md)。运行中重复请求不会并发启动；完成后再次点击会继续搜索。
 
 捕获完整快照，在游戏主线程检查原生实例、父容器指针、状态、坐标、方向、占格和容器几何；后台只计算托管数据。固定物品不移动，最终必须一一对应、不重叠、不越界。事务应用失败恢复快照，不以创建或销毁物品实现排列。
 
@@ -50,7 +60,7 @@ dotnet build ./src/SmartInventoryArrange/SmartInventoryArrange.csproj -c Release
 
 也可通过 `PROBABLY_STOLEN_DIR` 环境变量指定游戏目录。发布DLL沿用已验证、已安装的精确产物；不同路径重编译因调试信息可能产生不同哈希。
 
-以下五组测试直接编译Core及内嵌模型，不需要游戏程序集：
+以下测试直接编译Core及内嵌模型，不需要游戏程序集：
 
 ```powershell
 dotnet run --project ./tests/SmartInventoryArrange.Tests -c Release
@@ -58,9 +68,10 @@ dotnet run --project ./tests/SmartInventoryArrange.NativeSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.PerformanceSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.SnapshotSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.SessionSafety -c Release
+dotnet run --project ./tests/SmartInventoryArrange.ContainerSafety -c Release
 ```
 
-构建DLL后，可用纯.NET元数据检查中英文按钮常量，不加载Unity：
+构建DLL后，可用纯.NET元数据检查两个中英文按钮常量，不加载Unity：
 
 ```powershell
 dotnet run --project ./tests/SmartInventoryArrange.UiText -c Release -- ./src/SmartInventoryArrange/bin/Release/net6.0/SmartInventoryArrange.dll
@@ -70,7 +81,7 @@ dotnet run --project ./tests/SmartInventoryArrange.UiText -c Release -- ./src/Sm
 
 ## 历史真实日志对比
 
-下面图片保留自 **v3.13**，不是v3.17.2效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
+下面图片保留自 **v3.13**，不是v3.17.8效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
 
 ![24×10仓库历史布局与v3.13实际应用](assets/comparisons/warehouse-24x10.png)
 ![10×10医疗库存历史布局与v3.13实际应用](assets/comparisons/medical-10x10.png)

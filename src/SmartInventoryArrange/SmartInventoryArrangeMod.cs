@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Text;
 using System.Threading.Tasks;
 using HarmonyLib;
@@ -7,7 +7,7 @@ using MelonLoader;
 using SmartInventoryArrange.Core;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.17.2", "OpenAI")]
+[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.17.8", "OpenAI")]
 [assembly: MelonGame(null, "Probably Stolen")]
 
 namespace SmartInventoryArrange;
@@ -15,21 +15,26 @@ namespace SmartInventoryArrange;
 public sealed class SmartArrangeMod : MelonMod
 {
     internal static bool Busy;
+    internal static MelonPreferences_Entry<bool> KeepContainers = null!;
     private static readonly GlobalArrangeController Search = new();
 
     public override void OnInitializeMelon()
     {
-        LoggerInstance.Msg("SmartInventoryArrange v3.17.2 loaded: v3.13-derived empty-grid global repack + preserved search frontier + removal reset + native-pointer snapshot guard + field diagnostics; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
+        KeepContainers = MelonPreferences.CreateCategory("SmartInventoryArrange")
+            .CreateEntry<bool>("KeepContainers", true, "Keep containers in Preserve Containers mode");
+        LoggerInstance.Msg("SmartInventoryArrange v3.17.8 loaded: v3.13-derived empty-grid global repack + preserved search frontier + removal reset + native-pointer snapshot guard + slot-only real-state instance order (appraisal ignored, no flags changed) + SUPPLY_CRATE default-horizontal only + optional preserve-container obstacles; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
         LoggerInstance.Msg("Patching ItemContextHandler.OnEventInit, TriggerButton and OnEventReset");
     }
 
-    internal static void Run(GameGridInventory inventory)
+    internal static void Run(GameGridInventory inventory, bool preserveContainers = false)
     {
         if (Busy) { MelonLogger.Warning("Smart arrange ignored: an arrangement is already running."); return; }
         Busy = true;
         try
         {
-            var tx = InventoryTransaction.Capture(inventory);
+            bool keepContainers = preserveContainers && KeepContainers.Value;
+            var tx = InventoryTransaction.Capture(inventory, keepContainers);
+            MelonLogger.Msg($"Smart arrange mode: requested={(preserveContainers ? "preserve-containers" : "smart")}, keepContainers={keepContainers}, preservedContainers={tx.PreservedContainerCount}");
             string snapshotPath = tx.WriteDiagnosticSnapshot();
             MelonLogger.Msg($"Smart arrange exact input: {tx.WriteExactInput()}");
             double occupancy = DeterministicSolver.OccupancyRatio(tx.Problem);
@@ -63,7 +68,7 @@ public sealed class SmartArrangeMod : MelonMod
         {
             var progress=request.Session.Advance(request.NodeBudget,request.SolutionBatch);
             var baseline=DeterministicSolver.Evaluate(tx.Problem,tx.OriginalPlacements); // telemetry only
-            return (result:progress.Result,baseline,Diagnostic:request.Session.Diagnostic,progress);
+            return (result:tx.OrderInstances(progress.Result),baseline,Diagnostic:request.Session.Diagnostic,progress);
         });
 
         while (!task.IsCompleted) yield return null;
@@ -126,7 +131,6 @@ internal static class ContextInitPatch
         if (!__result || __instance.sortWindow == null || __instance.buttonSortSmallEnd == null) return;
         try
         {
-            NativeSmartMenu.Close();
             NativeSmartMenu.Open(__instance);
         }
         catch (Exception ex)
@@ -146,55 +150,76 @@ internal static class ContextInitPatch
 internal static class NativeSmartMenu
 {
     internal static RichTextElement? Button;
+    internal static RichTextElement? PreserveButton;
     internal static GridPixelElement? Grid;
+    private static IntPtr _window;
 
     internal static void Open(ItemContextHandler owner)
     {
-        var oldElement = owner.sortWindow.childElement ?? throw new InvalidOperationException("Sort window has no child element.");
+        var window = owner.sortWindow;
+        var oldElement = window.childElement ?? throw new InvalidOperationException("Sort window has no child element.");
+        // Native UI nodes may be reused. Do not append rows or increase height twice.
+        if (Grid != null && Button != null && PreserveButton != null &&
+            _window == window.Pointer && oldElement.Pointer == Grid.Pointer) return;
+        Close();
         var oldGrid = oldElement.Cast<GridPixelElement>();
-        var nativeButtons = new[]
-        {
-            owner.buttonSortBigStart,
-            owner.buttonSortSmallStart,
-            owner.buttonSortBigEnd,
-            owner.buttonSortSmallEnd
-        };
+        var nativeButtons = new[] { owner.buttonSortBigStart, owner.buttonSortSmallStart,
+            owner.buttonSortBigEnd, owner.buttonSortSmallEnd };
         if (nativeButtons.Any(x => x == null)) throw new InvalidOperationException("One or more native sort buttons are missing.");
-
         var source = owner.buttonSortSmallEnd;
         int rowHeight = Math.Max(1, source.heightPixels);
-        int width = Math.Max(owner.sortWindow.widthPixels, nativeButtons.Max(x => x.widthPixels));
+        int width = Math.Max(window.widthPixels, nativeButtons.Max(x => x.widthPixels));
         string label = ContextInitPatch.IsChinese() ? "\u667A\u80FD\u6392\u5217" : "Smart Arrange";
-
-        Button = new RichTextElement(false, width, rowHeight, true);
-        Button.SetPadding(source.leftPadding, source.rightPadding, source.topPadding, source.bottomPadding);
-        Button.SetText(label, Math.Max(source.maxCharWidth, label.Length), owner.textColor);
-        Button.Validate();
-
-        if (!owner.sortWindow.Detach(oldElement))
-            throw new InvalidOperationException("Failed to detach the native 1x4 sort grid.");
+        string preserveLabel = ContextInitPatch.IsChinese() ? "\u4FDD\u7559\u5BB9\u5668\u6392\u5217" : "Preserve Containers";
+        RichTextElement MakeButton(string text)
+        {
+            var button = new RichTextElement(false, width, rowHeight, true);
+            button.SetPadding(source.leftPadding, source.rightPadding, source.topPadding, source.bottomPadding);
+            button.SetText(text, Math.Max(source.maxCharWidth, text.Length), owner.textColor);
+            button.Validate();
+            return button;
+        }
+        var smart = MakeButton(label);
+        var preserve = MakeButton(preserveLabel);
+        width = Math.Max(width, Math.Max(smart.widthPixels, preserve.widthPixels));
+        var grid = new GridPixelElement(1, 6, false).SetSpacing(oldGrid._xSpacing, oldGrid._ySpacing);
+        grid.justifyWidth = oldGrid.justifyWidth;
+        grid.searchUsingPriority = oldGrid.searchUsingPriority;
+        int oldWidth = window.widthPixels, oldHeight = window.heightPixels;
+        if (!window.Detach(oldElement)) throw new InvalidOperationException("Failed to detach the native sort grid.");
         oldGrid.DetachAll();
-
-        Grid = new GridPixelElement(1, 5, false).SetSpacing(oldGrid._xSpacing, oldGrid._ySpacing);
-        Grid.justifyWidth = oldGrid.justifyWidth;
-        Grid.searchUsingPriority = oldGrid.searchUsingPriority;
-        for (int row = 0; row < nativeButtons.Length; row++)
-            if (!Grid.AttachPos(nativeButtons[row].Cast<PixelElement>(), 0, row))
-                throw new InvalidOperationException($"Failed to attach native sort row {row}.");
-        if (!Grid.AttachPos(Button.Cast<PixelElement>(), 0, 4))
-            throw new InvalidOperationException("Failed to attach the smart sort row.");
-        if (!owner.sortWindow.Attach(Grid.Cast<PixelElement>()))
-            throw new InvalidOperationException("Failed to attach the expanded 1x5 sort grid.");
-
-        owner.sortWindow.ResizePixels(width, owner.sortWindow.heightPixels + rowHeight + oldGrid._ySpacing);
-        owner.sortWindow.Validate();
-        MelonLogger.Msg($"Smart arrange menu injected: label={label}, nativeGrid={oldGrid.gridWidth}x{oldGrid.gridHeight}, expandedGrid=1x5, row={rowHeight}, window={owner.sortWindow.widthPixels}x{owner.sortWindow.heightPixels}");
+        try
+        {
+            for (int row = 0; row < nativeButtons.Length; row++)
+                if (!grid.AttachPos(nativeButtons[row].Cast<PixelElement>(), 0, row))
+                    throw new InvalidOperationException($"Failed to attach native sort row {row}.");
+            if (!grid.AttachPos(smart.Cast<PixelElement>(), 0, 4) ||
+                !grid.AttachPos(preserve.Cast<PixelElement>(), 0, 5))
+                throw new InvalidOperationException("Failed to attach smart sort rows.");
+            if (!window.Attach(grid.Cast<PixelElement>())) throw new InvalidOperationException("Failed to attach the expanded 1x6 sort grid.");
+            window.ResizePixels(width, oldHeight + 2 * (rowHeight + oldGrid._ySpacing));
+            window.Validate();
+            Button = smart; PreserveButton = preserve; Grid = grid; _window = window.Pointer;
+        }
+        catch
+        {
+            // Restore the four native controls if menu construction fails.
+            window.Detach(grid.Cast<PixelElement>()); grid.DetachAll();
+            for (int row = 0; row < nativeButtons.Length; row++)
+                oldGrid.AttachPos(nativeButtons[row].Cast<PixelElement>(), 0, row);
+            window.Attach(oldElement); window.ResizePixels(oldWidth, oldHeight); window.Validate();
+            Close(); throw;
+        }
+        MelonLogger.Msg($"Smart arrange menu injected: label={label}, preserveLabel={preserveLabel}, nativeGrid={oldGrid.gridWidth}x{oldGrid.gridHeight}, expandedGrid=1x6, row={rowHeight}, window={window.widthPixels}x{window.heightPixels}");
     }
+
+    internal static bool IsCurrent(ItemContextHandler owner) => Grid != null &&
+        owner.sortWindow != null && owner.sortWindow.Pointer == _window &&
+        owner.sortWindow.childElement?.Pointer == Grid.Pointer;
 
     internal static void Close()
     {
-        Button = null;
-        Grid = null;
+        Button = null; PreserveButton = null; Grid = null; _window = IntPtr.Zero;
     }
 }
 
@@ -203,10 +228,13 @@ internal static class ContextTriggerPatch
 {
     private static bool Prefix(ItemContextHandler __instance, RichTextElement button)
     {
-        if (NativeSmartMenu.Button == null || button.Pointer != NativeSmartMenu.Button.Pointer) return true;
+        if (!NativeSmartMenu.IsCurrent(__instance)) return true;
+        bool smart = NativeSmartMenu.Button != null && button.Pointer == NativeSmartMenu.Button.Pointer;
+        bool preserve = NativeSmartMenu.PreserveButton != null && button.Pointer == NativeSmartMenu.PreserveButton.Pointer;
+        if (!smart && !preserve) return true;
         var inventory = __instance.currentInventory;
         __instance.sortWindow?.Hide();
-        if (inventory != null) SmartArrangeMod.Run(inventory);
+        if (inventory != null) SmartArrangeMod.Run(inventory, preserve);
         return false;
     }
 }

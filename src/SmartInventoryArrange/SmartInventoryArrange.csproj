@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <LangVersion>latest</LangVersion>
@@ -8,7 +8,7 @@
     <RootNamespace>SmartInventoryArrange</RootNamespace>
     <Deterministic>true</Deterministic>
     <PlatformTarget>x64</PlatformTarget>
-    <Version>3.17.2</Version>
+    <Version>3.17.8</Version>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
 <ItemGroup>
