@@ -11,4 +11,4 @@ while(at<il.Length){ushort code=il[at++];if(code==0xFE)code=(ushort)(0xFE00|il[a
 int size=op.OperandType switch{OperandType.InlineNone=>0,OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar=>1,OperandType.InlineVar=>2,OperandType.InlineI8 or OperandType.InlineR=>8,OperandType.InlineSwitch=>4+4*BitConverter.ToInt32(il,at),_=>4};at+=size;}
 string chinese="\u667A\u80FD\u6392\u5217";
 bool exact=strings.Count(s=>s.Any(c=>c>127))==2&&strings.Contains(chinese)&&strings.Contains("\u4FDD\u7559\u5BB9\u5668\u6392\u5217"),english=strings.Contains("Smart Arrange")&&strings.Contains("Preserve Containers");var version=reader.GetAssemblyDefinition().Version;
-if(!exact||!english||version.ToString()!="3.17.8.0")throw new Exception("UI text/version mismatch");Console.WriteLine($"UI_TEXT version={version} chineseExact=True englishExact=True exit=0");
+if(!exact||!english||version.ToString()!="3.17.9.0")throw new Exception("UI text/version mismatch");Console.WriteLine($"UI_TEXT version={version} chineseExact=True englishExact=True exit=0");

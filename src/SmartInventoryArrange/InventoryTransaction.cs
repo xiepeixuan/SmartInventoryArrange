@@ -69,13 +69,15 @@ internal sealed class InventoryTransaction
             if(item==null||item.modifiedShape==null)throw new InvalidOperationException($"Snapshot capture: missing item or shape at child={i}.");
             string id = StableId(item, i, idCounts); var cats = Categories(item);
             bool canMove = item.MayRemove() && SnapshotConsistency.SameNativeObject(item.parentInventory?.Pointer??IntPtr.Zero, inventory.Pointer);
-            // Only the explicitly selected mode adds this rule. No category,
+            // Only the explicitly selected mode adds this rule. powerblock is
+            // the explicit non-window exception; never match a broad category. No
             // contents count, visibility, or native object access on the worker.
             if (keepContainers)
             {
                 bool hasContentWindow = item.contentWindow != null;
                 windowPresence.Add(item.Pointer, hasContentWindow);
-                if (hasContentWindow) { if (canMove) preservedContainerCount++; canMove=false; }
+                if (hasContentWindow || string.Equals(item.identifier, "powerblock", StringComparison.Ordinal))
+                { if (canMove) preservedContainerCount++; canMove=false; }
             }
             observedItems.Add(Observe(item,id,canMove)); // Before Clone or direction enumeration.
             var shape = item.modifiedShape.Clone(); allOriginal.Add((item, shape));
@@ -142,7 +144,7 @@ internal sealed class InventoryTransaction
         string path=Path.Combine(directory,DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".json");
         var state=_movable.ToDictionary(s=>s.StableId,s=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s.Fingerprint))),StringComparer.Ordinal);
         var disabled=new List<int[]>();for(int y=0;y<Height;y++)for(int x=0;x<Width;x++)if(!Problem.Usable[x,y])disabled.Add(new[]{x,y});
-        var data=new{schemaVersion=2,version="3.17.8",capturedAt=DateTimeOffset.Now,keepContainers=_keepContainers,preservedContainers=PreservedContainerCount,instanceOrderPolicy=InstanceOrder.Policy,instanceOrder=_instanceOrder,
+        var data=new{schemaVersion=2,version="3.17.9",capturedAt=DateTimeOffset.Now,keepContainers=_keepContainers,preservedContainers=PreservedContainerCount,instanceOrderPolicy=InstanceOrder.Policy,instanceOrder=_instanceOrder,
             wineOrder=_instanceOrder.Where(i=>i.ItemId==WineBottleOrder.TargetItemId).Select(i=>new WineBottleInfo(i.StableId,i.CurrentName,i.WineState,i.AgeDays)),
             provenance=new{nativeMasks=true,nativeStableIds=true,nativeStateVerified=false},
             @case=new{input=new{width=Width,height=Height,disabled,items=_capturedModels.Select(s=>new{

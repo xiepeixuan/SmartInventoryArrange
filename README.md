@@ -2,7 +2,11 @@
 
 为 **Probably Stolen Demo** 提供确定性、视觉优先的库存整理。
 
-**当前版本：v3.17.8（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.8) · [验证记录](docs/VALIDATION.md)
+**当前版本：v3.17.9（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.9) · [验证记录](docs/VALIDATION.md)
+
+## v3.17.9 更新说明
+
+“保留容器排列”新增能量阵列固定例外：即使没有内部储物窗口，也保持原位置和原方向，其他物品绕着它排列。只匹配精确 ItemId=`powerblock`，沿用 KeepContainers 开关，普通智能排列和其他机器不变。
 
 ## v3.17.6 → v3.17.8 更新说明
 
@@ -25,14 +29,14 @@
 
 Probably Stolen Demo **0.46D** · Unity **2021.3.45f2 / IL2CPP** · MelonLoader **0.7.3 x64** · Windows / .NET 6。
 
-1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.8)下载ZIP。
+1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.9)下载ZIP。
 2. 将当前DLL备份到Mods以外；只复制新的 `SmartInventoryArrange.dll` 至 `<游戏目录>/Mods`。
-3. 启动后在日志确认加载 `v3.17.8`。使用DLL不需要Python、离线资源或源码依赖。
+3. 启动后在日志确认加载 `v3.17.9`。使用DLL不需要Python、离线资源或源码依赖。
 
 发布DLL的SHA256：
 
 ```text
-4DC8598ED85F990C163F533F8541948250F5782C7F983FD44A97515CF37B4CC9
+632110B8C7EC1D385AD961B4A82114F397F51F2B054EDDB7901B15D20899BD4F
 ```
 
 ## 使用与保护
@@ -40,7 +44,7 @@ Probably Stolen Demo **0.46D** · Unity **2021.3.45f2 / IL2CPP** · MelonLoader 
 容器右键 → 游戏排序菜单：
 
 - **智能排列 / Smart Arrange**：普通全局智能排列。
-- **保留容器排列 / Preserve Containers**：在 `KeepContainers=true` 时，`item.contentWindow != null` 的实例保持原坐标和朝向，其他物品绕开固定障碍；不检查内容物数量或窗口显示状态。
+- **保留容器排列 / Preserve Containers**：在 `KeepContainers=true` 时，具有内部窗口或精确 ItemId 为 `powerblock`（能量阵列）的实例保持原坐标和朝向，其他物品绕开固定障碍；不检查内容物数量或窗口显示状态。
 
 本 Mod 配置为 `[SmartInventoryArrange] KeepContainers = true`（默认）；关闭后不额外固定，原生锁定规则仍有效。不读取其他 Mod 的 `[InventorySorter]` 配置。固定的物资箱保留当前实际方向；可移动物资箱按默认横向排列。
 
@@ -69,6 +73,7 @@ dotnet run --project ./tests/SmartInventoryArrange.PerformanceSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.SnapshotSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.SessionSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.ContainerSafety -c Release
+dotnet run --project ./tests/SmartInventoryArrange.PowerblockSafety -c Release
 ```
 
 构建DLL后，可用纯.NET元数据检查两个中英文按钮常量，不加载Unity：
@@ -81,7 +86,7 @@ dotnet run --project ./tests/SmartInventoryArrange.UiText -c Release -- ./src/Sm
 
 ## 历史真实日志对比
 
-下面图片保留自 **v3.13**，不是v3.17.8效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
+下面图片保留自 **v3.13**，不是v3.17.9效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
 
 ![24×10仓库历史布局与v3.13实际应用](assets/comparisons/warehouse-24x10.png)
 ![10×10医疗库存历史布局与v3.13实际应用](assets/comparisons/medical-10x10.png)
