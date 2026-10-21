@@ -4,6 +4,10 @@
 
 **当前版本：v3.17.9（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.9) · [验证记录](docs/VALIDATION.md)
 
+## 许可证与素材范围
+
+本项目可授权的原创代码采用 **[MIT License](LICENSE)**；具体文件范围见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)，第三方依赖见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。**游戏图片、游戏导出数据和第三方组件不随本项目改为 MIT。** 游戏素材再分发的明确授权仍待核实；公开仓库和标注出处不等于取得授权。
+
 ## v3.17.9 更新说明
 
 “保留容器排列”新增能量阵列固定例外：即使没有内部储物窗口，也保持原位置和原方向，其他物品绕着它排列。只匹配精确 ItemId=`powerblock`，沿用 KeepContainers 开关，普通智能排列和其他机器不变。
