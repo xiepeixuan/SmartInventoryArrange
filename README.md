@@ -15,7 +15,7 @@
 - 配置 `KeepContainers` 默认开启；原“智能排列”不增加本固定规则。
 - 核心装箱/评分策略与组内真实状态排序保持不变，保留完整快照、资格复核和事务回滚。
 
-[合并更新日志及上一公开版以来的补充](docs/CHANGELOG.md) · [组内状态排序规则](docs/SORTING_RULES.md)
+[合并更新日志及上一公开版以来的补充](docs/CHANGELOG.md) · [组内状态排序规则](docs/SORTING_RULES.md) · [视觉偏好分析](docs/VISUAL_PREFERENCES.md)
 
 ## 排列思路
 
