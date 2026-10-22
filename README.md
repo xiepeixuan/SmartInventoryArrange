@@ -2,11 +2,15 @@
 
 为 **Probably Stolen Demo** 提供确定性、视觉优先的库存整理。
 
-**当前版本：v3.17.9（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.9) · [验证记录](docs/VALIDATION.md)
+**当前版本：v3.17.10（预发布）** · [下载发布包](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.10) · [验证记录](docs/VALIDATION.md)
 
 ## 许可证与素材范围
 
 本项目可授权的原创代码采用 **[MIT License](LICENSE)**；具体文件范围见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)，第三方依赖见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。**游戏图片、游戏导出数据和第三方组件不随本项目改为 MIT。** 游戏素材再分发的明确授权仍待核实；公开仓库和标注出处不等于取得授权。
+
+## v3.17.10 更新说明
+
+修复水类容器自然温度变化导致智能排列反复取消的问题。只有温度变化且其他状态、位置、原生资格复核均通过时，才同步最新校验基准；真实含量/成分/品质或成员变化仍取消并保留保护。增加逐字段诊断、固定物品提交后校验和温度专项回归。排列算法、视觉规则与组内排序不变。
 
 ## v3.17.9 更新说明
 
@@ -26,7 +30,7 @@
 - 同物品优先相邻成排，必要时使用少量相邻换行；容器、机器及大件优先靠上靠左。
 - 使用游戏真实占格与合法旋转，支持不规则物品拼合、固定障碍和不同尺寸库存。
 - 从固定/禁用格约束出发，对可移动物品生成全新完整候选；原布局用于失败保全，不作为视觉评分否决新方案。
-- 再次点击保留搜索迭代器和前沿；没有更好候选时画面可以不变，但日志会显示新增工作。物品、状态或外部位置变化后重建搜索。
+- 再次点击保留搜索迭代器和前沿；没有更好候选时画面可以不变，但日志会显示新增工作。物品、影响布局/排序的状态或外部位置变化后重建搜索；仅自然温度变化通过严格复核时保留会话。
 - 首批最多25万DFS节点/64个原始解，后续每批2.5万/64；种子生成和评分不计入DFS节点。最多4096唯一候选，保留最佳256个；不是400ms硬截止或数学全局最优保证。
 
 ## 素材库与离线研发流程
@@ -52,14 +56,14 @@
 
 Probably Stolen Demo **0.46D** · Unity **2021.3.45f2 / IL2CPP** · MelonLoader **0.7.3 x64** · Windows / .NET 6。
 
-1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.9)下载ZIP。
+1. 退出游戏，从[发布页](https://github.com/xiepeixuan/SmartInventoryArrange/releases/tag/v3.17.10)下载ZIP。
 2. 将当前DLL备份到Mods以外；只复制新的 `SmartInventoryArrange.dll` 至 `<游戏目录>/Mods`。
-3. 启动后在日志确认加载 `v3.17.9`。使用DLL不需要Python、离线资源或源码依赖。
+3. 启动后在日志确认加载 `v3.17.10`。使用DLL不需要Python、离线资源或源码依赖。
 
 发布DLL的SHA256：
 
 ```text
-632110B8C7EC1D385AD961B4A82114F397F51F2B054EDDB7901B15D20899BD4F
+EBED2B6680D1F56733DBFF8ADB09BDB52D559D888C569E66CE5B5718EF7171F1
 ```
 
 ## 使用与保护
@@ -75,7 +79,7 @@ Probably Stolen Demo **0.46D** · Unity **2021.3.45f2 / IL2CPP** · MelonLoader 
 
 捕获完整快照，在游戏主线程检查原生实例、父容器指针、状态、坐标、方向、占格和容器几何；后台只计算托管数据。固定物品不移动，最终必须一一对应、不重叠、不越界。事务应用失败恢复快照，不以创建或销毁物品实现排列。
 
-计算期间请不要移动目标库存物品。快照确实发生变化时取消提交；日志给出stage、物品和具体旧/新字段。通过检查不等于所有原生API故障、存档重载或多Mod兼容性已完成验证。
+计算期间请不要移动目标库存物品。除严格复核通过的精确温度字段变化外，快照发生变化时取消提交；日志给出stage、物品和具体旧/新字段。通过检查不等于所有原生API故障、存档重载或多Mod兼容性已完成验证。
 
 ## 构建与公开测试
 
@@ -97,6 +101,8 @@ dotnet run --project ./tests/SmartInventoryArrange.SnapshotSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.SessionSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.ContainerSafety -c Release
 dotnet run --project ./tests/SmartInventoryArrange.PowerblockSafety -c Release
+
+dotnet run --project ./tests/SmartInventoryArrange.TemperatureSafety -c Release
 ```
 
 构建DLL后，可用纯.NET元数据检查两个中英文按钮常量，不加载Unity：
@@ -109,7 +115,7 @@ dotnet run --project ./tests/SmartInventoryArrange.UiText -c Release -- ./src/Sm
 
 ## 历史真实日志对比
 
-下面图片保留自 **v3.13**，不是v3.17.9效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
+下面图片保留自 **v3.13**，不是v3.17.10效果图；由日志坐标、原生图标和图鉴占格重绘，不是游戏截图。两侧来自不同时间，同物品集合不等于已核实同一批实例/状态；左图不宣称游戏原版排序。
 
 ![24×10仓库历史布局与v3.13实际应用](assets/comparisons/warehouse-24x10.png)
 ![10×10医疗库存历史布局与v3.13实际应用](assets/comparisons/medical-10x10.png)

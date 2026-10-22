@@ -11,7 +11,9 @@ internal sealed class InventoryTransaction
     private readonly bool _keepContainers;
     private readonly IReadOnlyDictionary<IntPtr,bool> _capturedWindowPresence;
     public int PreservedContainerCount { get; }
-    private readonly InventoryObservation _capturedObservation;
+    private InventoryObservation _capturedObservation;
+    private Dictionary<IntPtr,ItemStateSnapshot> _stateBaseline;
+    private readonly Dictionary<IntPtr,string> _inputBaseline;
     private readonly InstanceOrderInfo[] _instanceOrder;
     private double _instanceOrderingMs;
     private string _instanceOrderingNotes="";
@@ -33,15 +35,15 @@ internal sealed class InventoryTransaction
     public int UnknownCategoryCount => Problem.Items.Count(i => i.PrimaryCategory == "~unknown");
 
     private InventoryTransaction(GameGridInventory inventory, List<Snap> movable, List<(GameItem, GridShape)> allOriginal,
-        LayoutProblem problem, IReadOnlyList<Placement> originals, int originX, int originY, IReadOnlyList<DiagnosticItem> diagnostics, IReadOnlyList<(LayoutItem Model,bool Movable)> capturedModels, InventoryObservation capturedObservation, bool keepContainers, IReadOnlyDictionary<IntPtr,bool> windowPresence, int preservedContainerCount)
-    { _inventory = inventory; _capturedObservation=capturedObservation;
+        LayoutProblem problem, IReadOnlyList<Placement> originals, int originX, int originY, IReadOnlyList<DiagnosticItem> diagnostics, IReadOnlyList<(LayoutItem Model,bool Movable)> capturedModels, InventoryObservation capturedObservation, bool keepContainers, IReadOnlyDictionary<IntPtr,bool> windowPresence, int preservedContainerCount, Dictionary<IntPtr,ItemStateSnapshot> states, Dictionary<IntPtr,string> inputs)
+    { _inventory = inventory; _capturedObservation=capturedObservation; _stateBaseline=states; _inputBaseline=inputs;
         _keepContainers=keepContainers; _capturedWindowPresence=windowPresence; PreservedContainerCount=preservedContainerCount;
         _instanceOrder=movable.Select(s=>InstanceOrderNative.Read(s.Item,s.StableId)).ToArray(); _movable = movable; _allOriginal = allOriginal; Problem = problem; OriginalPlacements = originals; _originX = originX; _originY = originY; _diagnostics = diagnostics; _capturedModels=capturedModels;
         // Runtime identity is used only for invalidation, never layout ordering.
         SessionContext=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
             new { inventory=inventory.Pointer.ToString(), originX, originY, keepContainers,
                 windows=windowPresence.OrderBy(x=>x.Key.ToInt64()).Select(x=>new { pointer=x.Key.ToString(), exists=x.Value }),
-                instances=allOriginal.Select(x=>new{pointer=x.Item1.Pointer.ToString(),state=Fingerprint(x.Item1)}).OrderBy(x=>x.pointer,StringComparer.Ordinal),
+                instances=allOriginal.Select(x=>new{pointer=x.Item1.Pointer.ToString(),state=states[x.Item1.Pointer].SessionToken}).OrderBy(x=>x.pointer,StringComparer.Ordinal),
                 movableIdentity=movable.Select(x=>new{x.StableId,pointer=x.Item.Pointer.ToString()}).OrderBy(x=>x.StableId,StringComparer.Ordinal) })));
     }
 
@@ -57,6 +59,7 @@ internal sealed class InventoryTransaction
         int preservedContainerCount=0;
         var capturedModels=new List<(LayoutItem Model,bool Movable)>();
         var observedItems=new List<SnapshotItem>();
+        var states=new Dictionary<IntPtr,ItemStateSnapshot>();var inputs=new Dictionary<IntPtr,string>();
         string capturedGeometry=Geometry(inventory);
         var movable = new List<Snap>(); var fixedItems = new List<Placement>(); var allOriginal = new List<(GameItem, GridShape)>();
         var raw = new List<(GameItem item, string id, GridShape shape, List<string> categories, bool movable)>();
@@ -79,7 +82,9 @@ internal sealed class InventoryTransaction
                 if (hasContentWindow || string.Equals(item.identifier, "powerblock", StringComparison.Ordinal))
                 { if (canMove) preservedContainerCount++; canMove=false; }
             }
-            observedItems.Add(Observe(item,id,canMove)); // Before Clone or direction enumeration.
+            var state=InstanceOrderNative.CaptureState(item);states.Add(item.Pointer,state);
+            observedItems.Add(Observe(item,id,canMove,state)); // Before Clone or direction enumeration.
+            inputs.Add(item.Pointer,InputContext(item));
             var shape = item.modifiedShape.Clone(); allOriginal.Add((item, shape));
             raw.Add((item, id, shape, cats, canMove));
         }
@@ -95,7 +100,7 @@ internal sealed class InventoryTransaction
                 Orientations = orientations, OriginalMask = Mask(r.shape), OriginalOrientation = r.shape.orientation, OriginalX = r.shape.minX - container.minX, OriginalY = r.shape.minY - container.minY,
                 VisualPriority = VisualPriority(primary) };
             capturedModels.Add((model,r.movable));
-            if (r.movable) movable.Add(new Snap(r.item, r.id, r.shape, Fingerprint(r.item), model));
+            if (r.movable) movable.Add(new Snap(r.item, r.id, r.shape, states[r.item.Pointer].Fingerprint, model));
             else fixedItems.Add(new Placement(r.id, r.shape.minX - container.minX, r.shape.minY - container.minY, r.shape.orientation, Mask(r.shape), "~fixed", false));
         }
         var originals = movable.Select(s =>
@@ -119,7 +124,7 @@ internal sealed class InventoryTransaction
         }).ToArray();
         DeterministicSolver.ValidateProblem(problem);
         var observation=new InventoryObservation(inventory.Pointer,capturedGeometry,Array.AsReadOnly(observedItems.ToArray()));
-        var transaction=new InventoryTransaction(inventory, movable, allOriginal, problem, originals, container.minX, container.minY, diagnostics, capturedModels,observation,keepContainers,windowPresence,preservedContainerCount);
+        var transaction=new InventoryTransaction(inventory, movable, allOriginal, problem, originals, container.minX, container.minY, diagnostics, capturedModels,observation,keepContainers,windowPresence,preservedContainerCount,states,inputs);
         transaction.AssertSnapshotCurrent("capture-complete");
         return transaction;
     }
@@ -144,7 +149,7 @@ internal sealed class InventoryTransaction
         string path=Path.Combine(directory,DateTime.Now.ToString("yyyyMMdd-HHmmss-fff")+"-"+Guid.NewGuid().ToString("N")+".json");
         var state=_movable.ToDictionary(s=>s.StableId,s=>Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s.Fingerprint))),StringComparer.Ordinal);
         var disabled=new List<int[]>();for(int y=0;y<Height;y++)for(int x=0;x<Width;x++)if(!Problem.Usable[x,y])disabled.Add(new[]{x,y});
-        var data=new{schemaVersion=2,version="3.17.9",capturedAt=DateTimeOffset.Now,keepContainers=_keepContainers,preservedContainers=PreservedContainerCount,instanceOrderPolicy=InstanceOrder.Policy,instanceOrder=_instanceOrder,
+        var data=new{schemaVersion=2,version="3.17.10",capturedAt=DateTimeOffset.Now,keepContainers=_keepContainers,preservedContainers=PreservedContainerCount,instanceOrderPolicy=InstanceOrder.Policy,instanceOrder=_instanceOrder,
             wineOrder=_instanceOrder.Where(i=>i.ItemId==WineBottleOrder.TargetItemId).Select(i=>new WineBottleInfo(i.StableId,i.CurrentName,i.WineState,i.AgeDays)),
             provenance=new{nativeMasks=true,nativeStableIds=true,nativeStateVerified=false},
             @case=new{input=new{width=Width,height=Height,disabled,items=_capturedModels.Select(s=>new{
@@ -245,53 +250,103 @@ internal sealed class InventoryTransaction
         for(int y=0;y<shape.height;y++)for(int x=0;x<shape.width;x++)b.Append(shape.Get(x+shape.minX,y+shape.minY)==0?'1':'0');
         return b.ToString();
     }
-    private static SnapshotItem Observe(GameItem item,string stableId,bool movable)
+    private static SnapshotItem Observe(GameItem item,string stableId,bool movable,ItemStateSnapshot? state=null)
     {
         var shape=item.modifiedShape;
         var pose=shape==null?null:new SnapshotPose(shape.minX,shape.minY,shape.orientation,shape.globalWidth,shape.globalHeight,Mask(shape).Signature);
-        return new(item.Pointer,item.parentInventory?.Pointer??IntPtr.Zero,stableId,movable,Fingerprint(item),pose);
+        return new(item.Pointer,item.parentInventory?.Pointer??IntPtr.Zero,stableId,movable,(state??InstanceOrderNative.CaptureState(item)).Fingerprint,pose);
     }
-    public void AssertSnapshotCurrent(string stage="before-apply")
+    // Deliberately fail closed if catalogue/native shape reads fail. These are
+    // search inputs even when no currently used ordering feature changed.
+    private static string InputContext(GameItem item)=>System.Text.Json.JsonSerializer.Serialize(new {
+        categories=item.itemTypes==null?Array.Empty<string>():Enumerable.Range(0,item.itemTypes.Count).Select(k=>item.itemTypes[k]).OrderBy(x=>x,StringComparer.Ordinal).ToArray(),
+        mayRemove=item.MayRemove(),
+        orientations=BuildOrientations(item.modifiedShape).Select(o=>new{o.GameOrientation,mask=o.Mask.Signature}) });
+    private (InventoryObservation Observation,Dictionary<IntPtr,ItemStateSnapshot> States) ReadCurrent(string stage)
     {
-        var captured=_capturedObservation.Items.ToDictionary(x=>x.Pointer);
-        var items=new List<SnapshotItem>();
-        int wrapperAliases=0;
+        if(!InventorySortHelper.MaySort(_inventory)||!InventorySortHelper.CanSort(_inventory))
+            throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; inventory sorting eligibility changed.");
+        var captured=_capturedObservation.Items.ToDictionary(x=>x.Pointer);var states=new Dictionary<IntPtr,ItemStateSnapshot>();
+        var items=new List<SnapshotItem>();int wrapperAliases=0;
         for(int k=0;k<_inventory.childItems.Count;k++)
         {
             var item=_inventory.childItems[k];
             if(item==null){items.Add(new(0,0,$"child-{k}",false,"null",null));continue;}
-            if (_keepContainers && _capturedWindowPresence.TryGetValue(item.Pointer,out bool hadWindow) &&
-                (item.contentWindow != null) != hadWindow)
-                throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; contentWindow presence changed for {item.identifier}.");
+            bool hasWindow=false;
+            if(_keepContainers)
+            {
+                hasWindow=item.contentWindow!=null;
+                if(_capturedWindowPresence.TryGetValue(item.Pointer,out bool hadWindow)&&hasWindow!=hadWindow)
+                    throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; contentWindow presence changed for {item.identifier}.");
+            }
             captured.TryGetValue(item.Pointer,out var old);
+            if(item.modifiedShape==null)throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; missing shape for {old?.StableId??item.identifier}.");
+            if(_inputBaseline.TryGetValue(item.Pointer,out var expectedInput)&&InputContext(item)!=expectedInput)
+                throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; categories/native orientations/movement eligibility changed for {old?.StableId??item.identifier}.");
             var parent=item.parentInventory;
             if(parent!=null&&!ReferenceEquals(parent,_inventory)&&SnapshotConsistency.SameNativeObject(parent.Pointer,_inventory.Pointer))wrapperAliases++;
-            items.Add(Observe(item,old?.StableId??item.identifier,old?.Movable??false));
+            bool movable=item.MayRemove()&&SnapshotConsistency.SameNativeObject(parent?.Pointer??IntPtr.Zero,_inventory.Pointer)&&!(_keepContainers&&(hasWindow||string.Equals(item.identifier,"powerblock",StringComparison.Ordinal)));
+            var state=InstanceOrderNative.CaptureState(item);
+            if(!states.TryAdd(item.Pointer,state))throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; duplicate native member {item.Pointer}.");
+            items.Add(Observe(item,old?.StableId??item.identifier,movable,state));
         }
-        SnapshotConsistency.AssertSame(_capturedObservation,new(_inventory.Pointer,Geometry(_inventory),Array.AsReadOnly(items.ToArray())),stage);
-        MelonLoader.MelonLogger.Msg($"Smart arrange snapshot guard passed: stage={stage}, members={items.Count}, nativeWrapperAliases={wrapperAliases}, changedFields=0");
+        return (new(_inventory.Pointer,Geometry(_inventory),Array.AsReadOnly(items.ToArray())),states);
     }
-    private void AssertFixedSnapshotCurrent()
+    private void LogStateDifferences(Dictionary<IntPtr,ItemStateSnapshot> current,string stage,string decision)
     {
-        // Additional post-apply guard, inside the existing rollback-protected try.
-        // Movable poses have intentionally changed; fixed poses and all membership
-        // must still match the captured snapshot.
-        var current=_inventory.childItems;
-        var members=new Dictionary<IntPtr,GameItem>();
-        for(int k=0;k<current.Count;k++)
+        foreach(var pair in current)
+            if(_stateBaseline.TryGetValue(pair.Key,out var before)&&before.Fingerprint!=pair.Value.Fingerprint)
+            {
+                string id=_capturedObservation.Items.Single(s=>s.Pointer==pair.Key).StableId;
+                MelonLoader.MelonLogger.Msg($"Smart arrange state delta: stage={stage}, decision={decision}, item={id}, oldHash={before.Integrity}, newHash={pair.Value.Integrity}, fields="+
+                    string.Join(" | ",TemperatureDriftGuard.Differences(before,pair.Value)));
+            }
+    }
+    public void AssertSnapshotCurrent(string stage="before-apply")
+    {
+        var current=ReadCurrent(stage);
+        // Compare geometry/membership/movement independently of state. No state
+        // exception can waive a real pose, parent, instance, or lock change.
+        var expectedByPointer=_capturedObservation.Items.ToDictionary(x=>x.Pointer);
+        var geometryOnly=current.Observation with{Items=Array.AsReadOnly(current.Observation.Items.Select(s=>expectedByPointer.TryGetValue(s.Pointer,out var old)?s with{State=old.State}:s).ToArray())};
+        SnapshotConsistency.AssertSame(_capturedObservation,geometryOnly,stage);
+        var changed=current.States.Where(x=>_stateBaseline[x.Key].Fingerprint!=x.Value.Fingerprint).ToArray();
+        if(changed.Length>0)
         {
-            var item=current[k]??throw new InvalidOperationException("Post-apply inventory member missing.");
-            members.Add(item.Pointer,item);
+            if(changed.Any(x=>!TemperatureDriftGuard.IsTemperatureOnly(_stateBaseline[x.Key],x.Value)))
+            {
+                LogStateDifferences(current.States,stage,"reject-nonthermal");
+                SnapshotConsistency.AssertSame(_capturedObservation,current.Observation,stage);
+            }
+            // Validate original/native slots at the latest state before rebasing.
+            foreach(var item in _allOriginal)
+                if(!_inventory.CheckInventorySlotStillValid(item.item,item.item.modifiedShape,item.item.state))
+                    throw new InvalidOperationException($"Snapshot guard rejected stage={stage}; native current slot/state invalid for {item.item.identifier}.");
+            // Native callbacks may change state. A second strict read must agree;
+            // no partial baseline is published if any read/check fails.
+            var confirmed=ReadCurrent(stage+"-confirm");
+            SnapshotConsistency.AssertSame(current.Observation,confirmed.Observation,stage+"-confirm");
+            LogStateDifferences(confirmed.States,stage,"temperature-only-rebase");
+            _capturedObservation=confirmed.Observation;
+            _stateBaseline=confirmed.States;
+            for(int i=0;i<_movable.Count;i++)_movable[i]=_movable[i] with{Fingerprint=_stateBaseline[_movable[i].Item.Pointer].Fingerprint};
         }
-        if(members.Count!=_capturedObservation.Items.Count || _capturedObservation.Items.Any(s=>!members.ContainsKey(s.Pointer)))
-            throw new InvalidOperationException("Post-apply inventory membership changed.");
-        foreach(var pair in _capturedWindowPresence)
-            if((members[pair.Key].contentWindow!=null)!=pair.Value)
-                throw new InvalidOperationException("Post-apply contentWindow presence changed.");
-        var expected=Array.AsReadOnly(_capturedObservation.Items.Where(s=>!s.Movable).ToArray());
-        var actual=Array.AsReadOnly(expected.Select(s=>Observe(members[s.Pointer],s.StableId,false)).ToArray());
-        SnapshotConsistency.AssertSame(new(_inventory.Pointer,_capturedObservation.Geometry,expected),
-            new(_inventory.Pointer,Geometry(_inventory),actual),"after-apply-fixed");
+        SnapshotConsistency.AssertSame(_capturedObservation,current.Observation,stage);
+        MelonLoader.MelonLogger.Msg($"Smart arrange snapshot guard passed: stage={stage}, members={current.Observation.Items.Count}, temperatureRebased={changed.Length}, changedFields=0");
+    }
+    private void AssertStrictCurrent(string stage,bool allowMovedPoses=false)
+    {
+        var actual=ReadCurrent(stage);
+        LogStateDifferences(actual.States,stage,"reject-during-commit");
+        var expected=_capturedObservation;
+        if(allowMovedPoses)
+        {
+            var captured=expected.Items.ToDictionary(s=>s.Pointer);
+            // Only movable poses are intentional. States and fixed poses are
+            // always exact, including normal-mode locked objects.
+            actual.Observation=actual.Observation with{Items=Array.AsReadOnly(actual.Observation.Items.Select(s=>captured.TryGetValue(s.Pointer,out var old)&&old.Movable?s with{Pose=old.Pose}:s).ToArray())};
+        }
+        SnapshotConsistency.AssertSame(expected,actual.Observation,stage);
     }
     public void RestoreCapturedSnapshot()=>Rollback();
 
@@ -299,6 +354,7 @@ internal sealed class InventoryTransaction
     {
         if (placements.Count != _movable.Count || placements.Select(p => p.StableId).Distinct(StringComparer.Ordinal).Count() != _movable.Count)
             throw new InvalidOperationException("Candidate does not contain every movable item exactly once.");
+        AssertSnapshotCurrent("apply-entry");
         VerifyUnchanged();
         var targets = new List<(Snap snap, GridShape target, Placement placement)>();
         var ignored = new Il2CppSystem.Collections.Generic.List<GameItem>();
@@ -307,10 +363,13 @@ internal sealed class InventoryTransaction
         {
             var p = placements.Single(x => x.StableId == s.StableId);
             var target = new GridShapeBuilder(s.OriginalShape).SetOrientation(p.GameOrientation).SetPosition(p.X + _originX, p.Y + _originY).Build();
+            if (Mask(target).Signature!=p.Mask.Signature)
+                throw new InvalidOperationException($"Native target mask differs from immutable candidate for {s.StableId}.");
             if (!_inventory.CheckShapePlacement(s.Item, target, ignored))
                 throw new InvalidOperationException($"Game collision precheck rejected {s.StableId} at {p.X},{p.Y} orientation {p.GameOrientation}.");
             targets.Add((s, target, p));
         }
+        AssertStrictCurrent("before-stage"); // No rebasing after target prechecks.
         try
         {
             // Slot validity sees the inventory's current occupancy. Validate it
@@ -321,9 +380,9 @@ internal sealed class InventoryTransaction
                 if (!_inventory.CheckInventorySlotStillValid(entry.snap.Item, entry.target, entry.snap.Item.state))
                     throw new InvalidOperationException($"Game slot/state validation rejected {entry.snap.StableId} at {entry.placement.X},{entry.placement.Y} orientation {entry.placement.GameOrientation}.");
             _inventory.Validate(); _inventory.ForceRecomputeDynamicBackground();
+            AssertStrictCurrent("after-apply",allowMovedPoses:true);
             VerifyUnchanged(ignoreShape: true);
-            if (_keepContainers) AssertFixedSnapshotCurrent();
-            foreach (var entry in targets) if (entry.snap.Item.modifiedShape.minX != entry.target.minX || entry.snap.Item.modifiedShape.minY != entry.target.minY || entry.snap.Item.modifiedShape.orientation != entry.target.orientation)
+            foreach (var entry in targets) if (entry.snap.Item.modifiedShape.minX != entry.placement.X+_originX || entry.snap.Item.modifiedShape.minY != entry.placement.Y+_originY || entry.snap.Item.modifiedShape.orientation != entry.placement.GameOrientation || Mask(entry.snap.Item.modifiedShape).Signature != entry.placement.Mask.Signature)
                 throw new InvalidOperationException("Post-apply shape verification failed for " + entry.snap.Item.identifier);
         }
         catch

@@ -101,16 +101,20 @@ internal static class InstanceOrderNative
             QualityRank=quality,FreshnessRank=Rank("CATEGORY_FRESHNESS"),EquipmentRank=Rank("CATEGORY_EQUIPMENT_CONDITION"),
             Expired=expired,Unavailable=unavailable,Opened=Rank("CATEGORY_OPEN_BOX"),Rusted=Rank("CATEGORY_RUSTED"),Dented=Rank("CATEGORY_DENTED"),Counterfeit=counterfeit,Diagnostics=diagnostics};
     }
-    private static string StateIntegrity(GameItem item)
+    internal static SmartInventoryArrange.Core.ItemStateSnapshot CaptureState(GameItem item)
     {
-        var rows=new List<string>();var dict=item.state?.dict;
+        var tags=new List<SmartInventoryArrange.Core.StateTag>();var dict=item.state?.dict;
         if(dict!=null)foreach(var key in dict.Keys)
         {
             var t=dict[key];
-            rows.Add(t==null?JsonSerializer.Serialize(new{key,missing=true}):JsonSerializer.Serialize(new{key,t.identifier,t.valueEnabled,t.valueInt,t.valueLong,
-                floatBits=BitConverter.SingleToInt32Bits(t.valueFloat),doubleBits=BitConverter.DoubleToInt64Bits(t.valueDouble),t.valueBool,t.internalValueString}));
+            tags.Add(t==null?new(key,true,null,false,0,0,0,0,false,null):new(key,false,t.identifier,t.valueEnabled,t.valueInt,t.valueLong,
+                BitConverter.SingleToInt32Bits(t.valueFloat),BitConverter.DoubleToInt64Bits(t.valueDouble),t.valueBool,t.internalValueString));
         }
-        return Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(rows.OrderBy(x=>x,StringComparer.Ordinal))));
+        return new($"{item.identifier}|{item.uniqueId}|{item.unitCount}|{item.state}",JsonSerializer.Serialize(Read(item,"")),Array.AsReadOnly(tags.OrderBy(t=>t.Key,StringComparer.Ordinal).ToArray()));
     }
-    internal static string FingerprintSuffix(GameItem item)=>JsonSerializer.Serialize(new{order=Read(item,""),stateIntegrity=StateIntegrity(item)});
+    internal static string FingerprintSuffix(GameItem item)
+    {
+        var state=CaptureState(item);
+        return "{\"order\":"+state.OrderJson+",\"stateIntegrity\":\""+state.Integrity+"\"}";
+    }
 }

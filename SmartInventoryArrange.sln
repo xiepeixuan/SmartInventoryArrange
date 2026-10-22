@@ -25,6 +25,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.Conta
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.PowerblockSafety", "tests\SmartInventoryArrange.PowerblockSafety\SmartInventoryArrange.PowerblockSafety.csproj", "{469949D2-3343-4566-9524-8E242D449D9D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SmartInventoryArrange.TemperatureSafety", "tests\SmartInventoryArrange.TemperatureSafety\SmartInventoryArrange.TemperatureSafety.csproj", "{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -70,6 +72,10 @@ Global
 		{469949D2-3343-4566-9524-8E242D449D9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{469949D2-3343-4566-9524-8E242D449D9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{469949D2-3343-4566-9524-8E242D449D9D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E8C367AE-D80D-4C6D-8427-A498A50413E8} = {0B50D5FF-F891-4087-A3C1-10467A8F7805}
@@ -81,5 +87,6 @@ Global
 		{51051D48-0EA1-4499-84D6-C4AB55B36A62} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 		{1531FDDF-1CC6-496D-BE2A-11A5CFBE2B63} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 		{469949D2-3343-4566-9524-8E242D449D9D} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
+		{6BE5E12F-A36D-45A7-A722-41B3E7FA0C05} = {6192ECD5-A270-41BA-8EFE-AC09A88B2644}
 	EndGlobalSection
 EndGlobal

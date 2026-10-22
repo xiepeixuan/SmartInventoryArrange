@@ -69,15 +69,15 @@ namespace Il2Cpp {
   static long next=10000;public IntPtr Pointer=new(Interlocked.Increment(ref next));public int uniqueId;public int unitCount=1;public GameGridInventory? parentInventory;public GridShape modifiedShape=GridShape.Rect(1,1);public bool Removable=true;
   PixelWindow? window;public static int NativeThread=Environment.CurrentManagedThreadId;public static int WindowReads;
   public PixelWindow? contentWindow {get{if(Environment.CurrentManagedThreadId!=NativeThread)throw new Exception("Native window read from worker");WindowReads++;return window;}set{window=value;}}
-  public bool MayRemove()=>Removable;
+  public bool MayRemove(){if(Environment.CurrentManagedThreadId!=NativeThread)throw new Exception("Native MayRemove read from worker");return Removable;}
  }
  public sealed class GameGridInventory {
-  static long next=20000;public IntPtr Pointer=new(Interlocked.Increment(ref next));public GridShape inventoryShape;public List<GameItem> childItems=new();public bool CanSort=true,RejectSlot;public int Validations;public Action? OnValidate;public List<GameItem> LastIgnored=new();
+  static long next=20000;public IntPtr Pointer=new(Interlocked.Increment(ref next));public GridShape inventoryShape;public List<GameItem> childItems=new();public bool CanSort=true,RejectSlot;public int Validations;public Action? OnValidate,OnShapeCheck,OnSlotCheck;public int SlotChecks,ShapeChecks;public List<GameItem> LastIgnored=new();
   public GameGridInventory(int w=12,int h=8){inventoryShape=GridShape.Rect(w,h,container:true);}
   public void Add(GameItem i){i.parentInventory=this;childItems.Add(i);}
   bool Overlap(GridShape a,GridShape b)=>a.Cells.Any(c=>b.Get(a.minX+c.X,a.minY+c.Y)!=0);
-  public bool CheckShapePlacement(GameItem i,GridShape s,Il2CppSystem.Collections.Generic.List<GameItem> ignored){LastIgnored=ignored.ToList();return s.Cells.All(c=>inventoryShape.Get(s.minX+c.X,s.minY+c.Y)==0)&&!childItems.Any(j=>j!=i&&!ignored.Contains(j)&&Overlap(s,j.modifiedShape));}
-  public bool CheckInventorySlotStillValid(GameItem i,GridShape s,TagSystem state)=>!RejectSlot&&!childItems.Any(j=>j!=i&&Overlap(s,j.modifiedShape));
+  public bool CheckShapePlacement(GameItem i,GridShape s,Il2CppSystem.Collections.Generic.List<GameItem> ignored){ShapeChecks++;OnShapeCheck?.Invoke();LastIgnored=ignored.ToList();return s.Cells.All(c=>inventoryShape.Get(s.minX+c.X,s.minY+c.Y)==0)&&!childItems.Any(j=>j!=i&&!ignored.Contains(j)&&Overlap(s,j.modifiedShape));}
+  public bool CheckInventorySlotStillValid(GameItem i,GridShape s,TagSystem state){SlotChecks++;OnSlotCheck?.Invoke();return !RejectSlot&&!childItems.Any(j=>j!=i&&Overlap(s,j.modifiedShape));}
   public void Validate(){Validations++;var callback=OnValidate;OnValidate=null;callback?.Invoke();}public void ForceRecomputeDynamicBackground(){}
  }
  public static class InventorySortHelper {public static bool MaySort(GameGridInventory i)=>i.CanSort;public static bool CanSort(GameGridInventory i)=>i.CanSort;}

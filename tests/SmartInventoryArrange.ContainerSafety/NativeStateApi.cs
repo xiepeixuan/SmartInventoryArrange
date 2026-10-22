@@ -5,7 +5,7 @@ public sealed class TagState {public string identifier="";public float valueFloa
 public sealed class TagSystem {public Dictionary<string,TagState> dict=new(StringComparer.Ordinal);public TagState GetTag(string key)=>throw new Exception("MUTATION GetTag");}
 public sealed partial class GameItem {
  public string identifier="";public string Name="";public TagSystem state=new();public List<ItemFeature> itemFeatures=new();public List<string> itemTypes=new();
- public string GetDisplayName(bool preferCustomName)=>Name;
+ public string GetDisplayName(bool preferCustomName){if(Environment.CurrentManagedThreadId!=NativeThread)throw new Exception("Native display/state read from worker");return Name;}
  public TagState GetTagReadonly(string key)=>throw new Exception("FORBIDDEN initializer-through-readonly");
 }
 public sealed class ItemCondition {public string identifier="";public string category="";public int customValue;public int compareValue;public string display="";}

@@ -7,7 +7,7 @@ using MelonLoader;
 using SmartInventoryArrange.Core;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.17.9", "OpenAI")]
+[assembly: MelonInfo(typeof(SmartInventoryArrange.SmartArrangeMod), "Smart Inventory Arrange", "3.17.10", "OpenAI")]
 [assembly: MelonGame(null, "Probably Stolen")]
 
 namespace SmartInventoryArrange;
@@ -22,7 +22,7 @@ public sealed class SmartArrangeMod : MelonMod
     {
         KeepContainers = MelonPreferences.CreateCategory("SmartInventoryArrange")
             .CreateEntry<bool>("KeepContainers", true, "Keep containers in Preserve Containers mode");
-        LoggerInstance.Msg("SmartInventoryArrange v3.17.9 loaded: v3.13-derived empty-grid global repack + preserved search frontier + removal reset + native-pointer snapshot guard + slot-only real-state instance order (appraisal ignored, no flags changed) + SUPPLY_CRATE default-horizontal only + optional preserve-container obstacles (including powerblock); game 0.46D / MelonLoader 0.7.3 / IL2CPP");
+        LoggerInstance.Msg("SmartInventoryArrange v3.17.10 loaded: v3.13-derived empty-grid global repack + preserved search frontier + removal reset + native-pointer snapshot guard + slot-only real-state instance order (appraisal ignored, no flags changed) + SUPPLY_CRATE default-horizontal only + optional preserve-container obstacles (including powerblock) + temperature-only snapshot rebase with strict semantic/native checks; game 0.46D / MelonLoader 0.7.3 / IL2CPP");
         LoggerInstance.Msg("Patching ItemContextHandler.OnEventInit, TriggerButton and OnEventReset");
     }
 

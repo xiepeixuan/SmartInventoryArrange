@@ -28,6 +28,8 @@ public static class SnapshotConsistency
         {
             string prefix=$"item={old.StableId}, fixed={!old.Movable}, pointer={old.Pointer}";
             if(!current.TryGetValue(old.Pointer,out var now)){differences.Add(prefix+", member: missing");continue;}
+            Diff(prefix+", stableId",old.StableId,now.StableId);
+            Diff(prefix+", movable",old.Movable,now.Movable);
             Diff(prefix+", parentPointer",old.ParentPointer,now.ParentPointer);
             if(old.Movable&&!SameNativeObject(old.ParentPointer,expected.Pointer))differences.Add(prefix+", capturedParent: not-target");
             Diff(prefix+", state",old.State,now.State);
